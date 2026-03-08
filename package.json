@@ -1,0 +1,29 @@
+{
+  "name": "microverdes-iot",
+  "version": "1.0.0",
+  "description": "Automação de irrigação para microverdes com MQTT e EMQX Cloud",
+  "main": "claude_mqtt_render.js",
+  "scripts": {
+    "start": "node claude_mqtt_render.js",
+    "dev": "node claude_mqtt_render.js",
+    "test": "echo \"No tests configured\""
+  },
+  "keywords": [
+    "mqtt",
+    "emqx",
+    "microverdes",
+    "iot",
+    "automacao",
+    "irrigacao"
+  ],
+  "author": "Iotbrlabs",
+  "license": "MIT",
+  "dependencies": {
+    "mqtt": "^5.3.5",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": "18.x"
+  }
+}
