@@ -4,8 +4,8 @@
   "description": "Automação de irrigação para microverdes com MQTT e EMQX Cloud",
   "main": "claude_mqtt_render.js",
   "scripts": {
-    "start": "node claude_mqtt_render.js",
-    "dev": "node claude_mqtt_render.js",
+    "start": "bun ./nodejs/claude_mqtt_render.js",
+    "dev": "bun --watch ./nodejs/claude_mqtt_render.js",
     "test": "echo \"No tests configured\""
   },
   "keywords": [
@@ -24,6 +24,6 @@
   },
   "devDependencies": {},
   "engines": {
-    "node": "18.x"
+    "bun": "latest"
   }
 }
