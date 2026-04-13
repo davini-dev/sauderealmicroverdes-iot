@@ -1,26 +1,34 @@
 /*
   Claude Code + MQTT TLS/SSL + Render.com
-  
-  Conexão segura na porta 8883 com certificado DigiCert
-  Pronto para rodar 24/7 no Render (camada gratuita)
-  Inclui HTTP server para evitar pause automático
-  
-  Execute localmente:
-  npm install mqtt dotenv
-  node claude_mqtt_render_tls.js
-  
+  Base do primeiro arquivo + novas rotas do segundo arquivo
+
+  Dependências:
+  npm install mqtt dotenv express cors
+
   Variáveis de ambiente (.env):
   MQTT_BROKER_URL=mqtt.seu-id.emqx.cloud
   MQTT_BROKER_PORT=8883
   MQTT_USER=esp32
   MQTT_PASSWORD=mhda
+  PORT=3000
 */
 
 require('dotenv').config();
 const mqtt = require('mqtt');
-const http = require('http');
-const fs = require('fs');
+const express = require('express');
+const cors = require('cors');
 const path = require('path');
+
+// ==================== APP HTTP ====================
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+// se você tiver pasta public, pode deixar.
+// se não tiver, pode remover esta linha.
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ==================== CERTIFICADO SSL/TLS ====================
 // Certificado DigiCert Global Root G2 (EMQX Cloud)
@@ -47,71 +55,25 @@ pLiaWN0bfVKfjllDiIGknibVb63dDcY3fe0Dkhvld1927jyNxF1WW6LZZm6zNTfl
 MrY=
 -----END CERTIFICATE-----`;
 
-// ==================== HTTP SERVER ====================
-// Render pausa apps sem requisições HTTP
-// Este server simples previne isso
-
-const port = process.env.PORT || 3000;
-
-const server = http.createServer((req, res) => {
-  if (req.url === '/' || req.url === '/status') {
-    res.writeHead(200, {'Content-Type': 'application/json'});
-    res.end(JSON.stringify({
-      status: 'online',
-      app: 'microverdes-iot-tls',
-      timestamp: new Date().toISOString(),
-      uptime: Math.floor(process.uptime()),
-      conexao: {
-        mqtt: conexaoAtiva ? 'conectado (TLS/SSL 8883)' : 'desconectado',
-        certificado: 'DigiCert Global Root G2'
-      },
-      sensores: {
-        umidade: sensores.umidade + '%',
-        temperatura: sensores.temperatura + '°C',
-        luz: sensores.luz + '%'
-      },
-      irrigacao: irrigacaoAtiva ? 'LIGADA' : 'DESLIGADA'
-    }));
-  } else if (req.url === '/health') {
-    // Health check para UptimeRobot
-    res.writeHead(200);
-    res.end('OK');
-  } else {
-    res.writeHead(404);
-    res.end('Not Found');
-  }
-});
-
-server.listen(port, () => {
-  console.log(`📡 Server HTTP rodando em http://localhost:${port}`);
-  console.log(`   Status: http://localhost:${port}/status`);
-  console.log(`   Health: http://localhost:${port}/health\n`);
-});
-
 // ==================== MQTT CONFIG COM TLS/SSL ====================
-
 const BROKER_URL = process.env.MQTT_BROKER_URL || 'xda56908.ala.us-east-1.emqxsl.com';
-const BROKER_PORT = parseInt(process.env.MQTT_BROKER_PORT) || 8883; // TLS/SSL
+const BROKER_PORT = parseInt(process.env.MQTT_BROKER_PORT || '8883', 10);
 
-// Opções MQTT com TLS/SSL
 const MQTT_OPTIONS = {
   clientId: 'claude_render_' + Date.now(),
   username: process.env.MQTT_USER || 'esp32',
   password: process.env.MQTT_PASSWORD || 'mhda',
-  
-  // ===== TLS/SSL CONFIGURATION =====
-  protocol: 'mqtts',  // ← IMPORTANTE: mqtts para TLS
+
+  protocol: 'mqtts',
   port: BROKER_PORT,
-  ca: [CA_CERTIFICATE],  // Certificado DigiCert
-  rejectUnauthorized: true,  // Validar certificado
-  
-  // Opções adicionais
+  ca: [CA_CERTIFICATE],
+  rejectUnauthorized: true,
+
   clean: true,
   reconnectPeriod: 5000,
   keepalive: 120,
   connectTimeout: 10000,
-  
-  // Last Will and Testament (LWT)
+
   will: {
     topic: 'status/claude_render',
     payload: JSON.stringify({
@@ -128,11 +90,64 @@ let sensores = {
   umidade: 0,
   temperatura: 0,
   luz: 0,
+  ar: null,
+  neblina: null,
   ultimaAtualizacao: null
 };
 
 let irrigacaoAtiva = false;
 let conexaoAtiva = false;
+let mqttStatus = 'desconectado';
+
+let device = {
+  id: null,
+  ip: null,
+  mac: null,
+  rssi: null,
+  uptime: null,
+  uptimeMs: null,
+  heapFree: null,
+  sensores: null,
+  ts: null
+};
+
+let bandejas = {};
+let eventos = [];
+
+// ==================== UTIL ====================
+function addEvento(tipo, msg) {
+  eventos.unshift({ tipo, msg, ts: new Date().toISOString() });
+  if (eventos.length > 20) eventos.pop();
+}
+
+function getSensoresEstruturados() {
+  return {
+    umidade: {
+      valor: sensores.umidade,
+      ts: sensores.ultimaAtualizacao
+    },
+    temp: {
+      valor: sensores.temperatura,
+      ts: sensores.ultimaAtualizacao
+    },
+    ar: {
+      valor: sensores.ar,
+      ts: sensores.ultimaAtualizacao
+    },
+    luz: {
+      valor: sensores.luz,
+      ts: sensores.ultimaAtualizacao
+    },
+    neblina: {
+      valor: sensores.neblina,
+      ts: sensores.ultimaAtualizacao
+    },
+    irrigacao: {
+      valor: irrigacaoAtiva ? 'ON' : 'OFF',
+      ts: sensores.ultimaAtualizacao
+    }
+  };
+}
 
 // ==================== MQTT CONNECTION ====================
 console.log('\n╔════════════════════════════════════════════════╗');
@@ -147,7 +162,6 @@ console.log(`   Usuário: ${MQTT_OPTIONS.username}`);
 console.log(`   Certificado: DigiCert Global Root G2`);
 console.log(`   Validação: ${MQTT_OPTIONS.rejectUnauthorized ? 'SIM' : 'NÃO'}\n`);
 
-// Construir URL de conexão
 const brokerUrl = `mqtts://${BROKER_URL}:${BROKER_PORT}`;
 console.log(`🔗 Conectando a: ${brokerUrl}\n`);
 
@@ -157,10 +171,10 @@ client.on('connect', () => {
   console.log('✅ Conectado ao EMQX Cloud com TLS/SSL!');
   console.log(`   🔒 Conexão segura (cifra: TLS 1.2+)`);
   console.log(`   📅 ${new Date().toLocaleTimeString('pt-BR')}\n`);
-  
+
   conexaoAtiva = true;
-  
-  // Publicar status online
+  mqttStatus = 'conectado';
+
   const statusPayload = {
     status: 'online',
     timestamp: new Date().toISOString(),
@@ -168,54 +182,110 @@ client.on('connect', () => {
     certificado: 'DigiCert Global Root G2',
     hostname: process.env.RENDER_EXTERNAL_HOSTNAME || 'local'
   };
-  
+
   client.publish(
     'status/claude_render',
     JSON.stringify(statusPayload),
     { retain: true }
   );
-  
-  // Inscrever em tópicos
+
+  // tópicos antigos + novos do segundo arquivo
   client.subscribe([
     'sensores/umidade',
     'sensores/temperatura',
     'sensores/luz',
-    'irrigacao/status'
+    'irrigacao/status',
+
+    'microverdes/sensor/umidade',
+    'microverdes/sensor/temp',
+    'microverdes/sensor/ar',
+    'microverdes/sensor/luz',
+    'microverdes/status/neblina',
+    'microverdes/cmd/irrigacao',
+    'microverdes/bandeja/+',
+    'microverdes/device/info'
   ]);
-  
-  console.log('📡 Inscrito em: sensores/*, irrigacao/status\n');
+
+  console.log('📡 Inscrito em tópicos antigos e novos\n');
+  addEvento('info', 'MQTT conectado ao broker EMQX.');
 });
 
 client.on('message', (topic, message) => {
-  const valor = parseFloat(message.toString());
-  
-  // Atualizar estado
+  const raw = message.toString();
+  const agora = new Date();
+  sensores.ultimaAtualizacao = agora;
+
+  // ===== tópicos do primeiro arquivo =====
   if (topic === 'sensores/umidade') {
-    sensores.umidade = valor;
+    sensores.umidade = parseFloat(raw);
   } else if (topic === 'sensores/temperatura') {
-    sensores.temperatura = valor;
+    sensores.temperatura = parseFloat(raw);
   } else if (topic === 'sensores/luz') {
-    sensores.luz = valor;
+    sensores.luz = parseFloat(raw);
   } else if (topic === 'irrigacao/status') {
-    irrigacaoAtiva = message.toString() === 'on';
+    irrigacaoAtiva = raw === 'on' || raw === 'ON';
   }
-  
-  sensores.ultimaAtualizacao = new Date();
-  
-  // Log com timestamp
-  const tempo = sensores.ultimaAtualizacao.toLocaleTimeString('pt-BR');
-  const nomeTopic = topic.split('/')[1].toUpperCase();
-  console.log(`[${tempo}] 📊 ${nomeTopic}: ${valor}`);
-  
-  // Executar lógica
+
+  // ===== tópicos do segundo arquivo =====
+  else if (topic === 'microverdes/sensor/umidade') {
+    sensores.umidade = parseFloat(raw);
+    checarAlertas('umidade', sensores.umidade);
+  } else if (topic === 'microverdes/sensor/temp') {
+    sensores.temperatura = parseFloat(raw);
+  } else if (topic === 'microverdes/sensor/ar') {
+    sensores.ar = parseFloat(raw);
+    checarAlertas('ar', sensores.ar);
+  } else if (topic === 'microverdes/sensor/luz') {
+    sensores.luz = parseFloat(raw);
+  } else if (topic === 'microverdes/status/neblina') {
+    sensores.neblina = raw;
+  } else if (topic === 'microverdes/cmd/irrigacao') {
+    irrigacaoAtiva = raw === 'ON' || raw === 'on';
+    if (irrigacaoAtiva) addEvento('ok', 'Ciclo de irrigação iniciado.');
+  } else if (topic === 'microverdes/device/info') {
+    try {
+      const d = JSON.parse(raw);
+      device = {
+        id: d.id || device.id,
+        ip: d.ip || device.ip,
+        mac: d.mac || device.mac,
+        rssi: d.rssi ?? device.rssi,
+        uptime: d.uptime || device.uptime,
+        uptimeMs: d.uptime_ms ?? device.uptimeMs,
+        heapFree: d.heap_free ?? device.heapFree,
+        sensores: d.sensores || device.sensores,
+        ts: agora.toISOString()
+      };
+    } catch {
+      console.warn('[DEVICE] payload inválido:', raw);
+    }
+  }
+
+  const matchBandeja = topic.match(/^microverdes\/bandeja\/(\w+)$/);
+  if (matchBandeja) {
+    const id = matchBandeja[1];
+    try {
+      const dados = JSON.parse(raw);
+      bandejas[id] = { ...dados, ts: agora.toISOString() };
+      if (dados.umidade < 55) {
+        addEvento('warn', `Bandeja ${dados.nome || id}: umidade baixa (${dados.umidade}%).`);
+      }
+    } catch {
+      bandejas[id] = { umidade: parseFloat(raw), ts: agora.toISOString() };
+    }
+  }
+
+  const nomeTopic = topic.split('/').slice(-1)[0].toUpperCase();
+  console.log(`[${agora.toLocaleTimeString('pt-BR')}] 📊 ${nomeTopic}: ${raw}`);
+
   autoIrrigacao();
 });
 
 client.on('error', (err) => {
   console.error('\n❌ Erro MQTT:', err.message);
   conexaoAtiva = false;
-  
-  // Diagnóstico específico
+  mqttStatus = 'erro';
+
   if (err.code === 'ECONNREFUSED') {
     console.error('   ❌ Conexão recusada');
     console.error('   → Servidor offline?');
@@ -234,13 +304,18 @@ client.on('error', (err) => {
     console.error('   → Username/senha incorretos?');
     console.error('   → Variáveis de ambiente configuradas?');
   }
-  
+
   console.error(`   Código: ${err.code || 'desconhecido'}\n`);
 });
 
 client.on('disconnect', () => {
   console.log('\n⚠️  Desconectado do EMQX Cloud');
   conexaoAtiva = false;
+  mqttStatus = 'desconectado';
+});
+
+client.on('offline', () => {
+  mqttStatus = 'offline';
 });
 
 client.on('reconnect', () => {
@@ -250,25 +325,19 @@ client.on('reconnect', () => {
 client.on('close', () => {
   console.log('🔌 Conexão fechada\n');
   conexaoAtiva = false;
+  mqttStatus = 'fechado';
 });
 
 // ==================== LÓGICA DE IRRIGAÇÃO ====================
-
-/**
- * Automação inteligente para microverdes
- * Clima do litoral SP: umidade alta, chuva frequente
- */
 function autoIrrigacao() {
   const umidade_minima = 50;
   const umidade_maxima = 85;
-  
-  // Ativar se umidade cair
+
   if (sensores.umidade < umidade_minima && !irrigacaoAtiva) {
     console.log(`⚠️  Umidade BAIXA (${sensores.umidade}%) → acionando irrigação\n`);
     ligarIrrigacao();
   }
-  
-  // Desativar se umidade sobe
+
   if (sensores.umidade > umidade_maxima && irrigacaoAtiva) {
     console.log(`✅ Umidade OK (${sensores.umidade}%) → pausando irrigação\n`);
     desligarIrrigacao();
@@ -278,6 +347,7 @@ function autoIrrigacao() {
 function ligarIrrigacao() {
   if (!irrigacaoAtiva && conexaoAtiva) {
     client.publish('irrigacao/ligar', 'on');
+    client.publish('microverdes/cmd/irrigacao', 'ON', { qos: 1 });
     irrigacaoAtiva = true;
   }
 }
@@ -285,17 +355,103 @@ function ligarIrrigacao() {
 function desligarIrrigacao() {
   if (irrigacaoAtiva && conexaoAtiva) {
     client.publish('irrigacao/desligar', 'off');
+    client.publish('microverdes/cmd/irrigacao', 'OFF', { qos: 1 });
     irrigacaoAtiva = false;
   }
 }
 
-// ==================== MONITORAMENTO ====================
+function checarAlertas(tipo, valor) {
+  if (tipo === 'umidade' && valor < 55) {
+    addEvento('warn', `Umidade do solo crítica: ${valor}%. Iniciando irrigação emergencial.`);
+    client.publish('microverdes/cmd/irrigacao', 'ON', { qos: 1 });
+  }
 
-// Log de status a cada 5 minutos
+  if (tipo === 'ar' && valor > 85) {
+    addEvento('warn', `Umidade do ar muito alta: ${valor}%. Nebulização suspensa.`);
+    client.publish('microverdes/status/neblina', 'OFF', { qos: 1 });
+  }
+}
+
+// ==================== ROTAS ORIGINAIS ====================
+app.get(['/', '/status'], (req, res) => {
+  res.status(200).json({
+    status: 'online',
+    app: 'microverdes-iot-tls',
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    conexao: {
+      mqtt: conexaoAtiva ? 'conectado (TLS/SSL 8883)' : 'desconectado',
+      certificado: 'DigiCert Global Root G2'
+    },
+    sensores: {
+      umidade: sensores.umidade + '%',
+      temperatura: sensores.temperatura + '°C',
+      luz: sensores.luz + '%',
+      ar: sensores.ar !== null ? sensores.ar + '%' : null,
+      neblina: sensores.neblina
+    },
+    irrigacao: irrigacaoAtiva ? 'LIGADA' : 'DESLIGADA'
+  });
+});
+
+app.get('/health', (_req, res) => {
+  res.status(200).send('OK');
+});
+
+// ==================== NOVAS ROTAS DO SEGUNDO ARQUIVO ====================
+app.get('/dashboard-data', async (_req, res) => {
+  res.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    mqtt: mqttStatus,
+    sensores: getSensoresEstruturados(),
+    bandejas,
+    device,
+    eventos: eventos.slice(0, 10),
+    clima: {
+      atual: null,
+      previsao: null,
+      idadeMinutos: null
+    }
+  });
+});
+
+app.post('/cmd', (req, res) => {
+  const { topico, valor } = req.body;
+
+  if (!topico || valor === undefined) {
+    return res.status(400).json({ erro: 'topico e valor são obrigatórios' });
+  }
+
+  const permitidos = [
+    'microverdes/cmd/irrigacao',
+    'microverdes/status/neblina',
+    'microverdes/cmd/reset',
+    'irrigacao/ligar',
+    'irrigacao/desligar'
+  ];
+
+  if (!permitidos.includes(topico)) {
+    return res.status(403).json({ erro: 'tópico não permitido' });
+  }
+
+  client.publish(topico, String(valor), { qos: 1 }, (err) => {
+    if (err) return res.status(500).json({ erro: err.message });
+
+    addEvento('info', `Comando manual: ${topico} = ${valor}`);
+    res.json({ ok: true, topico, valor });
+  });
+});
+
+app.get('/ping', (_req, res) => {
+  res.send('pong');
+});
+
+// ==================== MONITORAMENTO ====================
 setInterval(() => {
   const uptime = Math.floor(process.uptime());
   const memoria = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-  
+
   console.log(`\n📊 Status (uptime: ${uptime}s, memória: ${memoria}MB)`);
   console.log(`   Umidade: ${sensores.umidade}%`);
   console.log(`   Temperatura: ${sensores.temperatura}°C`);
@@ -303,33 +459,28 @@ setInterval(() => {
   console.log(`   Irrigação: ${irrigacaoAtiva ? '🟢 LIGADA' : '🔴 DESLIGADA'}`);
   console.log(`   MQTT: ${conexaoAtiva ? '🟢 Conectado (TLS)' : '🔴 Desconectado'}`);
   console.log(`   Última atualização: ${sensores.ultimaAtualizacao ? sensores.ultimaAtualizacao.toLocaleTimeString('pt-BR') : 'nunca'}\n`);
-}, 300000); // 5 minutos
+}, 300000);
 
 // ==================== GRACEFUL SHUTDOWN ====================
-
 process.on('SIGTERM', () => {
   console.log('\n📦 Recebido SIGTERM - encerrando gracefully...');
-  
-  // Publicar status offline
+
   if (conexaoAtiva) {
     client.publish('status/claude_render', JSON.stringify({
       status: 'offline',
       timestamp: new Date().toISOString()
     }));
   }
-  
-  // Desconectar MQTT
+
   client.end(false, () => {
     console.log('✅ MQTT desconectado');
   });
-  
-  // Fechar HTTP server
+
   server.close(() => {
     console.log('✅ HTTP server fechado');
     process.exit(0);
   });
-  
-  // Timeout de segurança
+
   setTimeout(() => {
     console.log('⚠️  Força saída após 10s');
     process.exit(1);
@@ -346,17 +497,24 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason) => {
   console.error('\n❌ Promise rejection não tratada:', reason);
 });
 
-// ==================== STARTUP ====================
+// ==================== STARTUP HTTP ====================
+const server = app.listen(port, () => {
+  console.log(`📡 Server HTTP rodando em http://localhost:${port}`);
+  console.log(`   Status: http://localhost:${port}/status`);
+  console.log(`   Health: http://localhost:${port}/health`);
+  console.log(`   Dashboard: http://localhost:${port}/dashboard-data`);
+  console.log(`   Ping: http://localhost:${port}/ping\n`);
+});
+
 console.log('🌱 Microverdes IoT rodando no Render.com');
 console.log('   Ambiente:', process.env.NODE_ENV || 'production');
 console.log('   Render:', process.env.RENDER ? 'Sim ✓' : 'Não (local)');
 console.log();
 
-// Timeout inicial - aguardar primeira conexão
 setTimeout(() => {
   if (!conexaoAtiva) {
     console.warn('\n⚠️  Aviso: MQTT não conectou após 15s');
@@ -367,44 +525,3 @@ setTimeout(() => {
     console.warn('   - Certificado válido\n');
   }
 }, 15000);
-
-/*
-  ⚠️  SETUP NO RENDER:
-  
-  1. Variáveis de ambiente (Environment):
-     MQTT_BROKER_URL = xda56908.ala.us-east-1.emqxsl.com
-     MQTT_BROKER_PORT = 8883
-     MQTT_USER = esp32
-     MQTT_PASSWORD = mhda
-     NODE_ENV = production
-  
-  2. Package.json deve ter:
-     {
-       "name": "microverdes-iot-tls",
-       "version": "1.0.0",
-       "main": "claude_mqtt_render_tls.js",
-       "scripts": {
-         "start": "node claude_mqtt_render_tls.js"
-       },
-       "dependencies": {
-         "mqtt": "^5.0.0",
-         "dotenv": "^16.0.0"
-       }
-     }
-  
-  3. Build command: npm install
-  
-  4. Start command: npm start
-  
-  5. Verificar:
-     - Logs dizem "Conectado ao EMQX Cloud com TLS/SSL!"
-     - GET https://seu-app-xxxxx.onrender.com/status
-       retorna JSON com sensores e "conexao": "mqtts://8883"
-  
-  6. Opcional - UptimeRobot (previne pause):
-     https://uptimerobot.com
-     Monitorar: https://seu-app-xxxxx.onrender.com/health
-     A cada 5 min
-  
-  ✅ App rodando 24/7 com segurança TLS/SSL!
-*/
