@@ -1,6 +1,12 @@
 /*
   Claude Code + MQTT TLS/SSL + Render.com
-  Base do primeiro arquivo + novas rotas do segundo arquivo
+  Versão 2.0: Suporte a múltiplos dispositivos com sensores em array
+  
+  Estrutura de dados:
+  - Dispositivos são armazenados em um mapa (Map)
+  - Cada dispositivo tem um array de sensores
+  - Dispositivos aparecem apenas quando online (via MQTT)
+  - Quando nenhum dispositivo está online, mostra apenas info do servidor
 
   Dependências:
   npm install mqtt dotenv express cors
@@ -26,8 +32,6 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// se você tiver pasta public, pode deixar.
-// se não tiver, pode remover esta linha.
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ==================== CERTIFICADO SSL/TLS ====================
@@ -38,13 +42,19 @@ MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3
 d3cuZGlnaWNlcnQuY29tMSAwHgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBH
 MjAeFw0xMzA4MDExMjAwMDBaFw0zODAxMTUxMjAwMDBaMGExCzAJBgNVBAYTAlVT
 MRUwEwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5j
-b20xIDAeBgNVBAMTF0RpZ2lDZXJ0IEdsb2JhbCBSb290IEcyMIIBIjANBgkqhkiG
-9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuzfNNNx7a8myaJCtSnX/RrohCgiN9RlUyfuI
-2/Ou8jqJkTx65qsGGmvPrC3oXgkkRLpimn7Wo6h+4FR1IAWsULecYxpsMNzaHxmx
-1x7e/dfgy5SDN67sH0NO3Xss0r0upS/kqbitOtSZpLYl6ZtrAGCSYP9PIUkY92eQ
-q2EGnI/yuum06ZIya7XzV+hdG82MHauVBJVJ8zUtluNJbd134/tJS7SsVQepj5Wz
-tCO7TG1F8PapspUwtP1MVYwnSlcUfIKdzXOS0xZKBgyMUNGPHgm+F6HmIcr9g+UQ
-vIOlCsRnKPZzFBQ9RnbDhxSJITRNrw9FDKZJobq7nMWxM4MphQIDAQABo0IwQDAP
+b20xIDAeBgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBHMjCCASIwDQYJKoZI
+hvcNAQEBBQADggEPADCCAQoCggEBALs3zTTce2vJsmiQrUpx/0a6IQoIjfUZVMn7
+iNvzrvI6iZE8+uqrBhpr76wt6F4JJEi6Ypp+1qOofeAUdSAFrFCznGMabDDc2h8Z
+sddewv3X4MuUgzeu7B9DTd17LNK9LqUv5Km4rTrUmaT2JembaQBgkmD/TyFJGPdn
+kKthBpyP8rrptOmSMmu18/foXRvNjBWrlQSVSfM1LZbjSW3d9+P7SUu0rFUHqY+V
+s7Qju0xtRfD2qbKVMLT9TFWMJ0pXFHyCnc1zktMWygYMjFDRjx4JvhehxiHK/YPl
+ELyDpQrEZyj2cxQUPUZ2w4cUiSE0Ta8PRQymSKG6u5zFsTODKYUCAwEAAaNCMEAw
+DwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwHQYDVR0OBBYEFEhiVCAY
+lebjbuYP+vq5Eu0GF485MA0GCSqGSIb3DQEBCwUAA4IBAQBAZ4iUb3IIY+sxXepp
+GNWJfTzFi0p/6b7bKxf/sF9zdyoiEzmBZ0KEI/JFZzXsiL/4j7BhDDSkriBMhMbb
+8DXhe1nfpkKrxwQIhn82dCRa2mwNFFE1vvJJ3bYf++ElLtKxVB6mPlbO0I7tMbUX
+w+qmypXC0/UxVjCdKVxR8gp3Nc5LTFkqGDIxQ0aeHgm+F6HmIcr9g+UQvIOlCsRn
+KPZzFBQ9RnbDhxSJITRNrw9FDKZJobq7nMWxM4MphQIDAQABo0IwQDAP
 BgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBhjAdBgNVHQ4EFgQUTiJUIBiV
 5uNu5g/6+rkS7QYXjzkwDQYJKoZIhvcNAQELBQADggEBAGBnKJRvDkhj6zHd6mcY
 1Yl9PMWLSn/pvtsrF9+wX3N3KjITOYFnQoQj8kVnNeyIv/iPsGEMNKSuIEyExtv4
@@ -86,72 +96,108 @@ const MQTT_OPTIONS = {
 };
 
 // ==================== ESTADO ====================
-let sensores = {
-  umidade: 0,
-  temperatura: 0,
-  luz: 0,
-  ar: null,
-  neblina: null,
-  ultimaAtualizacao: null
+// Mapa de dispositivos: { deviceId: { info, sensores[], online, lastSeen } }
+let devices = new Map();
+
+// Informações do servidor
+let serverInfo = {
+  startTime: new Date(),
+  uptime: 0,
+  mqttStatus: 'desconectado',
+  conexaoAtiva: false
 };
 
-let irrigacaoAtiva = false;
-let conexaoAtiva = false;
-let mqttStatus = 'desconectado';
-
-let device = {
-  id: null,
-  ip: null,
-  mac: null,
-  rssi: null,
-  uptime: null,
-  uptimeMs: null,
-  heapFree: null,
-  sensores: null,
-  ts: null
-};
-
-let bandejas = {};
 let eventos = [];
 
 // ==================== UTIL ====================
 function addEvento(tipo, msg) {
   eventos.unshift({ tipo, msg, ts: new Date().toISOString() });
-  if (eventos.length > 20) eventos.pop();
+  if (eventos.length > 50) eventos.pop();
 }
 
-function getSensoresEstruturados() {
+/**
+ * Registra ou atualiza um dispositivo
+ * @param {string} deviceId - ID único do dispositivo
+ * @param {object} data - Dados do dispositivo
+ */
+function updateDevice(deviceId, data) {
+  if (!devices.has(deviceId)) {
+    devices.set(deviceId, {
+      id: deviceId,
+      info: {},
+      sensores: [],
+      online: false,
+      lastSeen: null,
+      firstSeen: new Date().toISOString()
+    });
+  }
+
+  const device = devices.get(deviceId);
+  const agora = new Date().toISOString();
+
+  if (data.info) {
+    device.info = { ...device.info, ...data.info };
+  }
+
+  if (data.sensor) {
+    // Adicionar ou atualizar sensor no array
+    const sensorIndex = device.sensores.findIndex(s => s.tipo === data.sensor.tipo);
+    if (sensorIndex >= 0) {
+      device.sensores[sensorIndex] = { ...data.sensor, ts: agora };
+    } else {
+      device.sensores.push({ ...data.sensor, ts: agora });
+    }
+  }
+
+  if (data.online !== undefined) {
+    device.online = data.online;
+  }
+
+  device.lastSeen = agora;
+
+  return device;
+}
+
+/**
+ * Retorna apenas os dispositivos que estão online
+ */
+function getOnlineDevices() {
+  const online = [];
+  devices.forEach((device, deviceId) => {
+    if (device.online) {
+      online.push({ id: deviceId, ...device });
+    }
+  });
+  return online;
+}
+
+/**
+ * Retorna informações do servidor
+ */
+function getServerInfo() {
   return {
-    umidade: {
-      valor: sensores.umidade,
-      ts: sensores.ultimaAtualizacao
+    status: 'online',
+    app: 'microverdes-iot-tls',
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    startTime: serverInfo.startTime.toISOString(),
+    conexao: {
+      mqtt: serverInfo.conexaoAtiva ? 'conectado (TLS/SSL 8883)' : 'desconectado',
+      certificado: 'DigiCert Global Root G2',
+      broker: BROKER_URL
     },
-    temp: {
-      valor: sensores.temperatura,
-      ts: sensores.ultimaAtualizacao
-    },
-    ar: {
-      valor: sensores.ar,
-      ts: sensores.ultimaAtualizacao
-    },
-    luz: {
-      valor: sensores.luz,
-      ts: sensores.ultimaAtualizacao
-    },
-    neblina: {
-      valor: sensores.neblina,
-      ts: sensores.ultimaAtualizacao
-    },
-    irrigacao: {
-      valor: irrigacaoAtiva ? 'ON' : 'OFF',
-      ts: sensores.ultimaAtualizacao
+    dispositivos: {
+      total: devices.size,
+      online: getOnlineDevices().length,
+      offline: devices.size - getOnlineDevices().length
     }
   };
 }
 
 // ==================== MQTT CONNECTION ====================
 console.log('\n╔════════════════════════════════════════════════╗');
-console.log('║  🌱 Microverdes IoT + Render + EMQX (TLS)      ║');
+console.log('║  🌱 Microverdes IoT v2.0 + Render + EMQX      ║');
+console.log('║  Suporte a múltiplos dispositivos              ║');
 console.log('╚════════════════════════════════════════════════╝\n');
 
 console.log(`📡 Configuração MQTT:`);
@@ -172,8 +218,8 @@ client.on('connect', () => {
   console.log(`   🔒 Conexão segura (cifra: TLS 1.2+)`);
   console.log(`   📅 ${new Date().toLocaleTimeString('pt-BR')}\n`);
 
-  conexaoAtiva = true;
-  mqttStatus = 'conectado';
+  serverInfo.conexaoAtiva = true;
+  serverInfo.mqttStatus = 'conectado';
 
   const statusPayload = {
     status: 'online',
@@ -189,13 +235,15 @@ client.on('connect', () => {
     { retain: true }
   );
 
-  // tópicos antigos + novos do segundo arquivo
+  // Inscrever em tópicos dinâmicos para múltiplos dispositivos
   client.subscribe([
+    // Tópicos legados (compatibilidade)
     'sensores/umidade',
     'sensores/temperatura',
     'sensores/luz',
     'irrigacao/status',
 
+    // Tópicos do segundo arquivo (compatibilidade)
     'microverdes/sensor/umidade',
     'microverdes/sensor/temp',
     'microverdes/sensor/ar',
@@ -203,88 +251,144 @@ client.on('connect', () => {
     'microverdes/status/neblina',
     'microverdes/cmd/irrigacao',
     'microverdes/bandeja/+',
-    'microverdes/device/info'
+    'microverdes/device/info',
+
+    // NOVOS: Tópicos para múltiplos dispositivos
+    'devices/+/online',           // devices/{deviceId}/online -> "true" ou "false"
+    'devices/+/info',             // devices/{deviceId}/info -> JSON com info do dispositivo
+    'devices/+/sensor/+',         // devices/{deviceId}/sensor/{sensorType} -> valor
+    'devices/+/sensors',          // devices/{deviceId}/sensors -> JSON com array de sensores
+    'devices/+/cmd/+',            // devices/{deviceId}/cmd/{comando} -> valor
   ]);
 
-  console.log('📡 Inscrito em tópicos antigos e novos\n');
+  console.log('📡 Inscrito em tópicos (legados + novos)\n');
   addEvento('info', 'MQTT conectado ao broker EMQX.');
 });
 
 client.on('message', (topic, message) => {
   const raw = message.toString();
   const agora = new Date();
-  sensores.ultimaAtualizacao = agora;
 
-  // ===== tópicos do primeiro arquivo =====
-  if (topic === 'sensores/umidade') {
-    sensores.umidade = parseFloat(raw);
-  } else if (topic === 'sensores/temperatura') {
-    sensores.temperatura = parseFloat(raw);
-  } else if (topic === 'sensores/luz') {
-    sensores.luz = parseFloat(raw);
-  } else if (topic === 'irrigacao/status') {
-    irrigacaoAtiva = raw === 'on' || raw === 'ON';
+  // ===== NOVOS TÓPICOS: Múltiplos dispositivos =====
+  
+  // devices/{deviceId}/online
+  const matchOnline = topic.match(/^devices\/([^/]+)\/online$/);
+  if (matchOnline) {
+    const deviceId = matchOnline[1];
+    const isOnline = raw === 'true' || raw === '1' || raw === 'on';
+    updateDevice(deviceId, { online: isOnline });
+    console.log(`[${agora.toLocaleTimeString('pt-BR')}] 🔌 ${deviceId}: ${isOnline ? '🟢 ONLINE' : '🔴 OFFLINE'}`);
+    if (isOnline) {
+      addEvento('info', `Dispositivo ${deviceId} conectado.`);
+    } else {
+      addEvento('warn', `Dispositivo ${deviceId} desconectado.`);
+    }
+    return;
   }
 
-  // ===== tópicos do segundo arquivo =====
-  else if (topic === 'microverdes/sensor/umidade') {
-    sensores.umidade = parseFloat(raw);
-    checarAlertas('umidade', sensores.umidade);
+  // devices/{deviceId}/info
+  const matchInfo = topic.match(/^devices\/([^/]+)\/info$/);
+  if (matchInfo) {
+    const deviceId = matchInfo[1];
+    try {
+      const info = JSON.parse(raw);
+      updateDevice(deviceId, { info, online: true });
+      console.log(`[${agora.toLocaleTimeString('pt-BR')}] ℹ️  ${deviceId}: Info atualizado`);
+      return;
+    } catch (err) {
+      console.warn(`[DEVICE INFO] payload inválido: ${raw}`);
+      return;
+    }
+  }
+
+  // devices/{deviceId}/sensor/{sensorType}
+  const matchSensor = topic.match(/^devices\/([^/]+)\/sensor\/([^/]+)$/);
+  if (matchSensor) {
+    const deviceId = matchSensor[1];
+    const sensorType = matchSensor[2];
+    const valor = parseFloat(raw) || raw;
+
+    updateDevice(deviceId, {
+      sensor: { tipo: sensorType, valor },
+      online: true
+    });
+
+    console.log(`[${agora.toLocaleTimeString('pt-BR')}] 📊 ${deviceId}/${sensorType}: ${valor}`);
+    return;
+  }
+
+  // devices/{deviceId}/sensors (array completo)
+  const matchSensors = topic.match(/^devices\/([^/]+)\/sensors$/);
+  if (matchSensors) {
+    const deviceId = matchSensors[1];
+    try {
+      const sensoresArray = JSON.parse(raw);
+      const device = devices.get(deviceId) || updateDevice(deviceId, {});
+      device.sensores = Array.isArray(sensoresArray) ? sensoresArray : [];
+      device.online = true;
+      device.lastSeen = agora.toISOString();
+      console.log(`[${agora.toLocaleTimeString('pt-BR')}] 📊 ${deviceId}: ${device.sensores.length} sensores`);
+      return;
+    } catch (err) {
+      console.warn(`[SENSORS] payload inválido: ${raw}`);
+      return;
+    }
+  }
+
+  // ===== TÓPICOS LEGADOS (compatibilidade com versão anterior) =====
+  if (topic === 'sensores/umidade') {
+    // Criar dispositivo padrão "default"
+    updateDevice('default', {
+      sensor: { tipo: 'umidade', valor: parseFloat(raw) },
+      online: true
+    });
+  } else if (topic === 'sensores/temperatura') {
+    updateDevice('default', {
+      sensor: { tipo: 'temperatura', valor: parseFloat(raw) },
+      online: true
+    });
+  } else if (topic === 'sensores/luz') {
+    updateDevice('default', {
+      sensor: { tipo: 'luz', valor: parseFloat(raw) },
+      online: true
+    });
+  } else if (topic === 'microverdes/sensor/umidade') {
+    updateDevice('default', {
+      sensor: { tipo: 'umidade', valor: parseFloat(raw) },
+      online: true
+    });
   } else if (topic === 'microverdes/sensor/temp') {
-    sensores.temperatura = parseFloat(raw);
+    updateDevice('default', {
+      sensor: { tipo: 'temperatura', valor: parseFloat(raw) },
+      online: true
+    });
   } else if (topic === 'microverdes/sensor/ar') {
-    sensores.ar = parseFloat(raw);
-    checarAlertas('ar', sensores.ar);
+    updateDevice('default', {
+      sensor: { tipo: 'ar', valor: parseFloat(raw) },
+      online: true
+    });
   } else if (topic === 'microverdes/sensor/luz') {
-    sensores.luz = parseFloat(raw);
-  } else if (topic === 'microverdes/status/neblina') {
-    sensores.neblina = raw;
-  } else if (topic === 'microverdes/cmd/irrigacao') {
-    irrigacaoAtiva = raw === 'ON' || raw === 'on';
-    if (irrigacaoAtiva) addEvento('ok', 'Ciclo de irrigação iniciado.');
+    updateDevice('default', {
+      sensor: { tipo: 'luz', valor: parseFloat(raw) },
+      online: true
+    });
   } else if (topic === 'microverdes/device/info') {
     try {
-      const d = JSON.parse(raw);
-      device = {
-        id: d.id || device.id,
-        ip: d.ip || device.ip,
-        mac: d.mac || device.mac,
-        rssi: d.rssi ?? device.rssi,
-        uptime: d.uptime || device.uptime,
-        uptimeMs: d.uptime_ms ?? device.uptimeMs,
-        heapFree: d.heap_free ?? device.heapFree,
-        sensores: d.sensores || device.sensores,
-        ts: agora.toISOString()
-      };
+      const info = JSON.parse(raw);
+      updateDevice('default', { info, online: true });
     } catch {
       console.warn('[DEVICE] payload inválido:', raw);
     }
   }
 
-  const matchBandeja = topic.match(/^microverdes\/bandeja\/(\w+)$/);
-  if (matchBandeja) {
-    const id = matchBandeja[1];
-    try {
-      const dados = JSON.parse(raw);
-      bandejas[id] = { ...dados, ts: agora.toISOString() };
-      if (dados.umidade < 55) {
-        addEvento('warn', `Bandeja ${dados.nome || id}: umidade baixa (${dados.umidade}%).`);
-      }
-    } catch {
-      bandejas[id] = { umidade: parseFloat(raw), ts: agora.toISOString() };
-    }
-  }
-
   const nomeTopic = topic.split('/').slice(-1)[0].toUpperCase();
   console.log(`[${agora.toLocaleTimeString('pt-BR')}] 📊 ${nomeTopic}: ${raw}`);
-
-  autoIrrigacao();
 });
 
 client.on('error', (err) => {
   console.error('\n❌ Erro MQTT:', err.message);
-  conexaoAtiva = false;
-  mqttStatus = 'erro';
+  serverInfo.conexaoAtiva = false;
+  serverInfo.mqttStatus = 'erro';
 
   if (err.code === 'ECONNREFUSED') {
     console.error('   ❌ Conexão recusada');
@@ -310,162 +414,190 @@ client.on('error', (err) => {
 
 client.on('disconnect', () => {
   console.log('\n⚠️  Desconectado do EMQX Cloud');
-  conexaoAtiva = false;
-  mqttStatus = 'desconectado';
+  serverInfo.conexaoAtiva = false;
+  serverInfo.mqttStatus = 'desconectado';
 });
 
 client.on('offline', () => {
-  mqttStatus = 'offline';
+  serverInfo.mqttStatus = 'offline';
 });
 
 client.on('reconnect', () => {
-  console.log('🔄 Tentando reconectar...\n');
+  console.log('🔄 Reconectando ao EMQX Cloud...');
 });
 
 client.on('close', () => {
   console.log('🔌 Conexão fechada\n');
-  conexaoAtiva = false;
-  mqttStatus = 'fechado';
+  serverInfo.conexaoAtiva = false;
+  serverInfo.mqttStatus = 'fechado';
 });
 
-// ==================== LÓGICA DE IRRIGAÇÃO ====================
-function autoIrrigacao() {
-  const umidade_minima = 50;
-  const umidade_maxima = 85;
+// ==================== ROTAS HTTP ====================
 
-  if (sensores.umidade < umidade_minima && !irrigacaoAtiva) {
-    console.log(`⚠️  Umidade BAIXA (${sensores.umidade}%) → acionando irrigação\n`);
-    ligarIrrigacao();
-  }
-
-  if (sensores.umidade > umidade_maxima && irrigacaoAtiva) {
-    console.log(`✅ Umidade OK (${sensores.umidade}%) → pausando irrigação\n`);
-    desligarIrrigacao();
-  }
-}
-
-function ligarIrrigacao() {
-  if (!irrigacaoAtiva && conexaoAtiva) {
-    client.publish('irrigacao/ligar', 'on');
-    client.publish('microverdes/cmd/irrigacao', 'ON', { qos: 1 });
-    irrigacaoAtiva = true;
-  }
-}
-
-function desligarIrrigacao() {
-  if (irrigacaoAtiva && conexaoAtiva) {
-    client.publish('irrigacao/desligar', 'off');
-    client.publish('microverdes/cmd/irrigacao', 'OFF', { qos: 1 });
-    irrigacaoAtiva = false;
-  }
-}
-
-function checarAlertas(tipo, valor) {
-  if (tipo === 'umidade' && valor < 55) {
-    addEvento('warn', `Umidade do solo crítica: ${valor}%. Iniciando irrigação emergencial.`);
-    client.publish('microverdes/cmd/irrigacao', 'ON', { qos: 1 });
-  }
-
-  if (tipo === 'ar' && valor > 85) {
-    addEvento('warn', `Umidade do ar muito alta: ${valor}%. Nebulização suspensa.`);
-    client.publish('microverdes/status/neblina', 'OFF', { qos: 1 });
-  }
-}
-
-// ==================== ROTAS ORIGINAIS ====================
+/**
+ * GET /status
+ * Retorna status do servidor
+ */
 app.get(['/', '/status'], (req, res) => {
-  res.status(200).json({
-    status: 'online',
-    app: 'microverdes-iot-tls',
-    timestamp: new Date().toISOString(),
-    uptime: Math.floor(process.uptime()),
-    conexao: {
-      mqtt: conexaoAtiva ? 'conectado (TLS/SSL 8883)' : 'desconectado',
-      certificado: 'DigiCert Global Root G2'
-    },
-    sensores: {
-      umidade: sensores.umidade + '%',
-      temperatura: sensores.temperatura + '°C',
-      luz: sensores.luz + '%',
-      ar: sensores.ar !== null ? sensores.ar + '%' : null,
-      neblina: sensores.neblina
-    },
-    irrigacao: irrigacaoAtiva ? 'LIGADA' : 'DESLIGADA'
-  });
+  res.status(200).json(getServerInfo());
 });
 
+/**
+ * GET /health
+ * Health check simples
+ */
 app.get('/health', (_req, res) => {
   res.status(200).send('OK');
 });
 
-// ==================== NOVAS ROTAS DO SEGUNDO ARQUIVO ====================
-app.get('/dashboard-data', async (_req, res) => {
+/**
+ * GET /devices
+ * Retorna lista de dispositivos (apenas online)
+ */
+app.get('/devices', (req, res) => {
+  const onlineDevices = getOnlineDevices();
   res.json({
     ok: true,
     ts: new Date().toISOString(),
-    mqtt: mqttStatus,
-    sensores: getSensoresEstruturados(),
-    bandejas,
-    device,
-    eventos: eventos.slice(0, 10),
-    clima: {
-      atual: null,
-      previsao: null,
-      idadeMinutos: null
-    }
+    total: devices.size,
+    online: onlineDevices.length,
+    offline: devices.size - onlineDevices.length,
+    devices: onlineDevices
   });
 });
 
+/**
+ * GET /devices/:deviceId
+ * Retorna detalhes de um dispositivo específico
+ */
+app.get('/devices/:deviceId', (req, res) => {
+  const { deviceId } = req.params;
+  const device = devices.get(deviceId);
+
+  if (!device) {
+    return res.status(404).json({ erro: 'Dispositivo não encontrado' });
+  }
+
+  res.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    device: { id: deviceId, ...device }
+  });
+});
+
+/**
+ * GET /devices/:deviceId/sensors
+ * Retorna apenas os sensores de um dispositivo
+ */
+app.get('/devices/:deviceId/sensors', (req, res) => {
+  const { deviceId } = req.params;
+  const device = devices.get(deviceId);
+
+  if (!device) {
+    return res.status(404).json({ erro: 'Dispositivo não encontrado' });
+  }
+
+  res.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    deviceId,
+    sensores: device.sensores
+  });
+});
+
+/**
+ * GET /dashboard-data
+ * Retorna dados para dashboard (compatibilidade com versão anterior)
+ */
+app.get('/dashboard-data', async (_req, res) => {
+  const onlineDevices = getOnlineDevices();
+
+  res.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    mqtt: serverInfo.mqttStatus,
+    server: getServerInfo(),
+    dispositivos: {
+      total: devices.size,
+      online: onlineDevices.length,
+      offline: devices.size - onlineDevices.length,
+      lista: onlineDevices
+    },
+    eventos: eventos.slice(0, 20)
+  });
+});
+
+/**
+ * POST /cmd
+ * Enviar comando para um dispositivo
+ * Body: { deviceId, comando, valor }
+ */
 app.post('/cmd', (req, res) => {
-  const { topico, valor } = req.body;
+  const { deviceId, comando, valor } = req.body;
 
-  if (!topico || valor === undefined) {
-    return res.status(400).json({ erro: 'topico e valor são obrigatórios' });
+  if (!deviceId || !comando || valor === undefined) {
+    return res.status(400).json({ 
+      erro: 'deviceId, comando e valor são obrigatórios' 
+    });
   }
 
-  const permitidos = [
-    'microverdes/cmd/irrigacao',
-    'microverdes/status/neblina',
-    'microverdes/cmd/reset',
-    'irrigacao/ligar',
-    'irrigacao/desligar'
-  ];
-
-  if (!permitidos.includes(topico)) {
-    return res.status(403).json({ erro: 'tópico não permitido' });
+  const device = devices.get(deviceId);
+  if (!device) {
+    return res.status(404).json({ erro: 'Dispositivo não encontrado' });
   }
 
+  if (!device.online) {
+    return res.status(503).json({ erro: 'Dispositivo offline' });
+  }
+
+  const topico = `devices/${deviceId}/cmd/${comando}`;
+  
   client.publish(topico, String(valor), { qos: 1 }, (err) => {
     if (err) return res.status(500).json({ erro: err.message });
 
-    addEvento('info', `Comando manual: ${topico} = ${valor}`);
-    res.json({ ok: true, topico, valor });
+    addEvento('info', `Comando: ${deviceId}/${comando} = ${valor}`);
+    res.json({ ok: true, deviceId, comando, valor });
   });
 });
 
+/**
+ * GET /ping
+ * Simples ping
+ */
 app.get('/ping', (_req, res) => {
   res.send('pong');
+});
+
+/**
+ * GET /eventos
+ * Retorna lista de eventos
+ */
+app.get('/eventos', (req, res) => {
+  res.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    total: eventos.length,
+    eventos
+  });
 });
 
 // ==================== MONITORAMENTO ====================
 setInterval(() => {
   const uptime = Math.floor(process.uptime());
   const memoria = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+  const onlineCount = getOnlineDevices().length;
 
   console.log(`\n📊 Status (uptime: ${uptime}s, memória: ${memoria}MB)`);
-  console.log(`   Umidade: ${sensores.umidade}%`);
-  console.log(`   Temperatura: ${sensores.temperatura}°C`);
-  console.log(`   Luz: ${sensores.luz}%`);
-  console.log(`   Irrigação: ${irrigacaoAtiva ? '🟢 LIGADA' : '🔴 DESLIGADA'}`);
-  console.log(`   MQTT: ${conexaoAtiva ? '🟢 Conectado (TLS)' : '🔴 Desconectado'}`);
-  console.log(`   Última atualização: ${sensores.ultimaAtualizacao ? sensores.ultimaAtualizacao.toLocaleTimeString('pt-BR') : 'nunca'}\n`);
+  console.log(`   Dispositivos: ${devices.size} total, ${onlineCount} online`);
+  console.log(`   MQTT: ${serverInfo.conexaoAtiva ? '🟢 Conectado (TLS)' : '🔴 Desconectado'}`);
+  console.log(`   Última atualização: ${new Date().toLocaleTimeString('pt-BR')}\n`);
 }, 300000);
 
 // ==================== GRACEFUL SHUTDOWN ====================
 process.on('SIGTERM', () => {
   console.log('\n📦 Recebido SIGTERM - encerrando gracefully...');
 
-  if (conexaoAtiva) {
+  if (serverInfo.conexaoAtiva) {
     client.publish('status/claude_render', JSON.stringify({
       status: 'offline',
       timestamp: new Date().toISOString()
@@ -506,17 +638,19 @@ const server = app.listen(port, () => {
   console.log(`📡 Server HTTP rodando em http://localhost:${port}`);
   console.log(`   Status: http://localhost:${port}/status`);
   console.log(`   Health: http://localhost:${port}/health`);
+  console.log(`   Dispositivos: http://localhost:${port}/devices`);
   console.log(`   Dashboard: http://localhost:${port}/dashboard-data`);
+  console.log(`   Eventos: http://localhost:${port}/eventos`);
   console.log(`   Ping: http://localhost:${port}/ping\n`);
 });
 
-console.log('🌱 Microverdes IoT rodando no Render.com');
+console.log('🌱 Microverdes IoT v2.0 rodando no Render.com');
 console.log('   Ambiente:', process.env.NODE_ENV || 'production');
 console.log('   Render:', process.env.RENDER ? 'Sim ✓' : 'Não (local)');
 console.log();
 
 setTimeout(() => {
-  if (!conexaoAtiva) {
+  if (!serverInfo.conexaoAtiva) {
     console.warn('\n⚠️  Aviso: MQTT não conectou após 15s');
     console.warn('   Verificar:');
     console.warn('   - Servidor está online');
