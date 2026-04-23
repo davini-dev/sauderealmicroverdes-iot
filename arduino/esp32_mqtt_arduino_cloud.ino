@@ -1,5 +1,6 @@
 /*
   ESP32-C3 + Arduino IDE + EMQX CLOUD (Gratuito)
+  Versão 2.0: Suporte EXCLUSIVO a múltiplos dispositivos com sensores em array
   
   ⚠️  ANTES DE USAR:
   1. Criar conta em https://www.emqx.cloud
@@ -7,13 +8,16 @@
   3. Criar username: iotbr, password: sua_senha
   4. Copiar Broker Address: seu-id.emqx.cloud
   
-  Mudanças vs EMQX local:
-  - MQTT_BROKER = "seu-id.emqx.cloud" (nuvem)
-  - Rest é idêntico!
+  Padrão de Comunicação (v2.0):
+  - Status Online: devices/{deviceId}/online
+  - Sensores: devices/{deviceId}/sensor/{tipo}
+  - Info: devices/{deviceId}/info
+  - Comandos: devices/{deviceId}/cmd/{comando}
 */
 
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <ArduinoJson.h>
 
 // ==================== CONFIG ====================
 // WiFi
@@ -21,14 +25,16 @@ const char* SSID = "seu_wifi";
 const char* PASSWORD = "sua_senha";
 
 // EMQX CLOUD (gratuito)
-// Copiar seu Broker ID de https://www.emqx.cloud/console
-const char* MQTT_BROKER = "seu-id.emqx.cloud";  // ← MUDAR AQUI
-const int MQTT_PORT = 1883;                      // 1883 (normal) ou 8883 (SSL)
+const char* MQTT_BROKER = "seu-id.emqx.cloud";
+const int MQTT_PORT = 1883;
 
-// Credenciais criadas no EMQX Cloud
+// Credenciais EMQX Cloud
 const char* MQTT_CLIENT_ID = "esp32_microverdes_01";
-const char* MQTT_USER = "iotbr";                 // ← Criar no dashboard
-const char* MQTT_PASSWORD = "senha_muito_forte"; // ← Criar no dashboard
+const char* MQTT_USER = "iotbr";
+const char* MQTT_PASSWORD = "senha_muito_forte";
+
+// ID único do dispositivo (IMPORTANTE: mude para cada ESP32!)
+const char* DEVICE_ID = "esp32_01";
 
 // ==================== PINOS ====================
 #define PIN_UMIDADE 3
@@ -46,18 +52,13 @@ const unsigned long INTERVALO_PUBLICA = 5000;
 unsigned long ultimaTentativaConexao = 0;
 const unsigned long INTERVALO_RECONEXAO = 5000;
 
+unsigned long ultimaPublicacaoInfo = 0;
+const unsigned long INTERVALO_PUBLICA_INFO = 60000;
+
 bool irrigacaoAtiva = false;
 
 const int ADC_UMIDADE_SECO = 3000;
 const int ADC_UMIDADE_MOLHADO = 1500;
-
-// ==================== ESTRUTURAS ====================
-struct SensorData {
-  int umidade;
-  float temperatura;
-  int luz;
-  unsigned long timestamp;
-};
 
 // ==================== SETUP ====================
 void setup() {
@@ -66,33 +67,29 @@ void setup() {
   
   Serial.println("\n\n");
   Serial.println("╔════════════════════════════════════════╗");
-  Serial.println("║  🌱 ESP32-C3 + EMQX CLOUD (Gratuito) ║");
-  Serial.println("║  Microverdes + Automação               ║");
+  Serial.println("║  🌱 ESP32-C3 + EMQX CLOUD v2.0        ║");
+  Serial.println("║  Padrão Multi-Dispositivo Exclusivo    ║");
   Serial.println("╚════════════════════════════════════════╝");
   Serial.println();
   Serial.println("📡 Broker: " + String(MQTT_BROKER));
   Serial.println("👤 Usuário: " + String(MQTT_USER));
+  Serial.println("🔧 Device ID: " + String(DEVICE_ID));
   Serial.println();
   
-  // Configurar pinos
   pinMode(PIN_RELAY_IRR, OUTPUT);
   pinMode(PIN_LED_STATUS, OUTPUT);
   digitalWrite(PIN_RELAY_IRR, LOW);
   digitalWrite(PIN_LED_STATUS, LOW);
   
-  // Configurar ADC
   analogSetAttenuation(ADC_11db);
   analogReadResolution(12);
   
-  // Conectar WiFi
   conectaWiFi();
   
-  // Configurar MQTT
   client.setServer(MQTT_BROKER, MQTT_PORT);
   client.setCallback(callbackMQTT);
   client.setKeepAlive(120);
   
-  // Conectar MQTT
   conectaMQTT();
   
   Serial.println("\n✅ Setup completo!");
@@ -101,7 +98,6 @@ void setup() {
 
 // ==================== LOOP ====================
 void loop() {
-  // Reconectar MQTT
   if (!client.connected()) {
     unsigned long agora = millis();
     if (agora - ultimaTentativaConexao >= INTERVALO_RECONEXAO) {
@@ -112,17 +108,19 @@ void loop() {
     client.loop();
   }
   
-  // Verificar WiFi
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("⚠️  WiFi desconectado. Reconectando...");
     conectaWiFi();
   }
   
-  // Publicar sensores
   unsigned long agora = millis();
   if (agora - ultimaPublicacao >= INTERVALO_PUBLICA) {
     ultimaPublicacao = agora;
     publicaSensores();
+  }
+  
+  if (agora - ultimaPublicacaoInfo >= INTERVALO_PUBLICA_INFO) {
+    ultimaPublicacaoInfo = agora;
+    publicaInfoDispositivo();
   }
   
   delay(100);
@@ -147,219 +145,121 @@ void conectaWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("✅ WiFi conectado: ");
     Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("❌ Falha WiFi");
   }
 }
 
 // ==================== CONEXÃO MQTT ====================
 void conectaMQTT() {
   Serial.print("📡 Conectando EMQX Cloud: ");
-  Serial.println(MQTT_BROKER);
   
   int tentativas = 0;
   while (!client.connected() && tentativas < 5) {
-    if (client.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD)) {
-      Serial.println("✅ EMQX Cloud conectado!");
+    // Configurar Last Will para marcar como offline automaticamente
+    String topicOnline = String("devices/") + DEVICE_ID + "/online";
+    if (client.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD, topicOnline.c_str(), 1, true, "false")) {
+      Serial.println("✅ Conectado!");
       
-      // Inscrever em tópicos
-      client.subscribe("irrigacao/ligar");
-      client.subscribe("irrigacao/desligar");
+      // Publicar status online
+      client.publish(topicOnline.c_str(), "true", true);
       
-      Serial.println("📡 Inscrito em: irrigacao/ligar, irrigacao/desligar\n");
+      // Inscrever em comandos
+      String topicCmd = String("devices/") + DEVICE_ID + "/cmd/+";
+      client.subscribe(topicCmd.c_str());
+      
       return;
     } else {
-      Serial.print("❌ Falha. Código: ");
-      Serial.print(client.state());
-      Serial.print(" (tentativa ");
-      Serial.print(tentativas + 1);
-      Serial.println("/5)");
-      
-      // Códigos de erro:
-      // 4 = BAD_CREDENTIALS (usuário/senha errados)
-      // -2 = CONNECT_FAILED (host não encontrado)
-      // -3 = CONNECTION_LOST (conexão caiu)
-      // -4 = TIMEOUT (timeout)
-      
+      Serial.print(".");
       delay(2000);
     }
     tentativas++;
   }
-  
-  if (!client.connected()) {
-    Serial.println("⚠️  Não conseguiu conectar. Tentará novamente em 5s...\n");
-  }
 }
 
 void reconectaMQTT() {
-  if (WiFi.status() != WL_CONNECTED) {
-    return;
+  if (WiFi.status() == WL_CONNECTED) {
+    conectaMQTT();
   }
-  
-  Serial.println("🔄 Reconectando EMQX Cloud...");
-  conectaMQTT();
 }
 
 // ==================== CALLBACK MQTT ====================
 void callbackMQTT(char* topic, byte* payload, unsigned int length) {
   String topico = String(topic);
   String mensagem = "";
+  for (unsigned int i = 0; i < length; i++) mensagem += (char)payload[i];
   
-  for (unsigned int i = 0; i < length; i++) {
-    mensagem += (char)payload[i];
-  }
-  
-  Serial.print("📨 Recebido: ");
-  Serial.print(topico);
-  Serial.print(" = ");
-  Serial.println(mensagem);
-  
-  if (topico == "irrigacao/ligar") {
-    ligarIrrigacao();
-  }
-  else if (topico == "irrigacao/desligar") {
-    desligarIrrigacao();
+  String prefix = String("devices/") + DEVICE_ID + "/cmd/";
+  if (topico.startsWith(prefix)) {
+    String comando = topico.substring(prefix.length());
+    
+    if (comando == "irrigacao") {
+      if (mensagem == "ON" || mensagem == "on" || mensagem == "1") ligarIrrigacao();
+      else if (mensagem == "OFF" || mensagem == "off" || mensagem == "0") desligarIrrigacao();
+    }
+    else if (comando == "reset") {
+      ESP.restart();
+    }
   }
 }
 
 // ==================== SENSORES ====================
-struct SensorData leSensores() {
-  struct SensorData dados;
+void publicaSensores() {
+  if (!client.connected()) return;
   
-  int soma_umidade = 0;
-  int soma_luz = 0;
+  int raw_umidade = analogRead(PIN_UMIDADE);
+  int raw_luz = analogRead(PIN_LUZ);
   
-  for (int i = 0; i < 10; i++) {
-    soma_umidade += analogRead(PIN_UMIDADE);
-    soma_luz += analogRead(PIN_LUZ);
-    delayMicroseconds(100);
-  }
+  int umidade = constrain(map(raw_umidade, ADC_UMIDADE_SECO, ADC_UMIDADE_MOLHADO, 0, 100), 0, 100);
+  int luz = map(raw_luz, 0, 4095, 0, 100);
+  float temperatura = 25.0 + (luz / 100.0) * 5.0;
   
-  int raw_umidade = soma_umidade / 10;
-  int raw_luz = soma_luz / 10;
+  char buffer[20];
+  String baseTopic = String("devices/") + DEVICE_ID + "/sensor/";
   
-  dados.umidade = constrain(
-    map(raw_umidade, ADC_UMIDADE_SECO, ADC_UMIDADE_MOLHADO, 0, 100),
-    0, 100
-  );
+  sprintf(buffer, "%d", umidade);
+  client.publish((baseTopic + "umidade").c_str(), buffer);
   
-  dados.luz = map(raw_luz, 0, 4095, 0, 100);
-  dados.temperatura = 25.0 + (dados.luz / 100.0) * 5.0;
-  dados.timestamp = millis();
+  dtostrf(temperatura, 5, 1, buffer);
+  client.publish((baseTopic + "temperatura").c_str(), buffer);
   
-  return dados;
+  sprintf(buffer, "%d", luz);
+  client.publish((baseTopic + "luz").c_str(), buffer);
+  
+  client.publish((baseTopic + "irrigacao").c_str(), irrigacaoAtiva ? "ON" : "OFF");
+  
+  Serial.printf("📤 U=%d%% T=%.1fC L=%d%%\n", umidade, temperatura, luz);
 }
 
-// ==================== PUBLICAR ====================
-void publicaSensores() {
-  if (!client.connected()) {
-    return;
-  }
+void publicaInfoDispositivo() {
+  if (!client.connected()) return;
   
-  struct SensorData sensores = leSensores();
-  char buffer[10];
+  StaticJsonDocument<256> doc;
+  doc["id"] = DEVICE_ID;
+  doc["ip"] = WiFi.localIP().toString();
+  doc["mac"] = WiFi.macAddress();
+  doc["rssi"] = WiFi.RSSI();
+  doc["uptime"] = millis() / 1000;
+  doc["heap_free"] = ESP.getFreeHeap();
   
-  // Umidade
-  sprintf(buffer, "%d", sensores.umidade);
-  client.publish("sensores/umidade", buffer);
-  
-  // Temperatura
-  dtostrf(sensores.temperatura, 5, 1, buffer);
-  client.publish("sensores/temperatura", buffer);
-  
-  // Luz
-  sprintf(buffer, "%d", sensores.luz);
-  client.publish("sensores/luz", buffer);
-  
-  // Log
-  Serial.print("📤 Sensores: U=");
-  Serial.print(sensores.umidade);
-  Serial.print("% T=");
-  Serial.print(sensores.temperatura, 1);
-  Serial.print("°C L=");
-  Serial.print(sensores.luz);
-  Serial.println("%");
+  String jsonString;
+  serializeJson(doc, jsonString);
+  client.publish((String("devices/") + DEVICE_ID + "/info").c_str(), jsonString.c_str());
 }
 
 // ==================== IRRIGAÇÃO ====================
 void ligarIrrigacao() {
-  if (!irrigacaoAtiva) {
-    digitalWrite(PIN_RELAY_IRR, HIGH);
-    digitalWrite(PIN_LED_STATUS, HIGH);
-    irrigacaoAtiva = true;
-    Serial.println("💧 ➡️  IRRIGAÇÃO LIGADA");
-    
-    if (client.connected()) {
-      client.publish("irrigacao/status", "on");
-    }
+  digitalWrite(PIN_RELAY_IRR, HIGH);
+  digitalWrite(PIN_LED_STATUS, HIGH);
+  irrigacaoAtiva = true;
+  if (client.connected()) {
+    client.publish((String("devices/") + DEVICE_ID + "/sensor/irrigacao").c_str(), "ON");
   }
 }
 
 void desligarIrrigacao() {
-  if (irrigacaoAtiva) {
-    digitalWrite(PIN_RELAY_IRR, LOW);
-    digitalWrite(PIN_LED_STATUS, LOW);
-    irrigacaoAtiva = false;
-    Serial.println("🛑 ➡️  IRRIGAÇÃO DESLIGADA");
-    
-    if (client.connected()) {
-      client.publish("irrigacao/status", "off");
-    }
+  digitalWrite(PIN_RELAY_IRR, LOW);
+  digitalWrite(PIN_LED_STATUS, LOW);
+  irrigacaoAtiva = false;
+  if (client.connected()) {
+    client.publish((String("devices/") + DEVICE_ID + "/sensor/irrigacao").c_str(), "OFF");
   }
 }
-
-// ==================== FUNÇÕES AUXILIARES ====================
-
-void publicaFloat(const char* topico, float valor) {
-  char buffer[10];
-  dtostrf(valor, 5, 2, buffer);
-  client.publish(topico, buffer);
-}
-
-void exibeDiagnostico() {
-  Serial.println("\n╔════════════════════════════════════════╗");
-  Serial.println("║         DIAGNÓSTICO DO SISTEMA        ║");
-  Serial.println("╚════════════════════════════════════════╝");
-  
-  Serial.print("WiFi: ");
-  Serial.println(WiFi.status() == WL_CONNECTED ? "✅ OK" : "❌ Desconectado");
-  
-  Serial.print("EMQX Cloud: ");
-  Serial.println(client.connected() ? "✅ OK" : "❌ Desconectado");
-  
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
-  
-  Serial.print("Irrigação: ");
-  Serial.println(irrigacaoAtiva ? "🟢 LIGADA" : "🔴 DESLIGADA");
-  
-  struct SensorData dados = leSensores();
-  Serial.print("Sensores: U=");
-  Serial.print(dados.umidade);
-  Serial.print("% T=");
-  Serial.print(dados.temperatura, 1);
-  Serial.print("°C L=");
-  Serial.print(dados.luz);
-  Serial.println("%");
-  
-  Serial.println("════════════════════════════════════════\n");
-}
-
-/*
-  ⚠️  ANTES DE USAR - CHECKLIST:
-  
-  ☐ Criar conta em https://www.emqx.cloud
-  ☐ Novo deployment (Free plan, região São Paulo)
-  ☐ Copiar Broker Address: xxx.emqx.cloud
-  ☐ Criar username: iotbr
-  ☐ Criar password: senha_forte_123
-  ☐ Atualizar MQTT_BROKER = "seu-id.emqx.cloud"
-  ☐ Atualizar MQTT_USER e MQTT_PASSWORD
-  ☐ Atualizar SSID e PASSWORD (WiFi)
-  ☐ Upload no ESP32
-  ☐ Abrir Serial Monitor (115200 baud)
-  ☐ Verificar "EMQX Cloud conectado!"
-  ☐ Checar dashboard em https://www.emqx.cloud
-  
-  ✅ Se vir "EMQX Cloud conectado!" está funcionando!
-*/
