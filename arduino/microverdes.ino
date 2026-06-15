@@ -1,0 +1,947 @@
+// ═══════════════════════════════════════════════════════════════
+//  sauderealmicroverdes.club — LilyGo T-Display S3
+//  Firmware completo com provisionamento + monitoramento
+//
+//  FLUXO DE BOOT:
+//    1. Le NVS -> se configurado -> tela de monitoramento
+//    2. Se nao configurado -> tela de provisionamento
+//       -> usuario preenche URL broker (ip:port) + nome device
+//       -> salva na NVS -> conecta -> monitoramento
+//
+//  BTN0 (GPIO0)  = navega teclas / segura 3s para resetar
+//  BTN1 (GPIO14) = pressiona tecla / confirma campo
+//
+//  BIBLIOTECAS:
+//    TFT_eSPI     (Bodmer)
+//    PubSubClient (Nick O'Leary)
+//    ArduinoJson  (Benoit Blanchon)
+//    Preferences  (built-in ESP32)
+//
+//  BOARD: ESP32S3 Dev Module
+//  Flash: 16MB / PSRAM: OPI / USB CDC On Boot: Enabled
+// ═══════════════════════════════════════════════════════════════
+
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <TFT_eSPI.h>
+#include <SPI.h>
+#include <Preferences.h>
+
+// ── Forward declarations (evita 'not declared in this scope') ─
+struct SensorSim { float valor, minVal, maxVal, delta, tend; };
+struct Bandeja    { const char* id; const char* nome; float u; float d; };
+struct Pub        { char t[48]; char v[16]; char h[10]; };
+
+void mqttCallback(char* topic, byte* payload, unsigned int length);
+
+// ── WiFi ──────────────────────────────────────────────────────
+const char* WIFI_SSID = "Internet";
+const char* WIFI_PASS = "12345678";
+
+// MQTT (nullptr = conexao anonima; broker 49.13.124.109 aceita anonimo)
+const char* MQTT_USER = nullptr;
+const char* MQTT_PASS = nullptr;
+
+// ── Botoes fisicos ────────────────────────────────────────────
+#define BTN0  0
+#define BTN1  14
+
+// ── NVS ───────────────────────────────────────────────────────
+#define NVS_NS      "srconfig"
+#define NVS_BROKER  "broker"
+#define NVS_DEVNAME "devname"
+#define NVS_DONE    "done"
+
+// ── Display ───────────────────────────────────────────────────
+TFT_eSPI tft = TFT_eSPI();
+#define TFT_W   320
+#define TFT_H   170
+
+// Paleta RGB565
+#define C_BG       0x0841
+#define C_HEADER   0x0526
+#define C_GREEN    0x07E0
+#define C_DKGREEN  0x03E0
+#define C_AMBER    0xFD20
+#define C_RED      0xF800
+#define C_WHITE    0xFFFF
+#define C_GRAY     0x8410
+#define C_LGRAY    0xC618
+#define C_DIVIDER  0x4208
+#define C_ROW_ODD  0x10A2
+#define C_ROW_EVEN 0x0841
+#define C_ACTIVE   0x0454
+#define C_INACTIVE 0x1082
+#define C_KEY_BG   0x2104
+#define C_KEY_ACT  0x03A0
+
+// ── Estado global ─────────────────────────────────────────────
+Preferences      prefs;
+WiFiClient       wifiClientPlain;
+WiFiClientSecure wifiClientSecure;
+WiFiClient       tcpProbeClient;
+PubSubClient     mqttClient(wifiClientPlain);
+
+char cfgBroker[64]  = "";
+char cfgDevName[20] = "";
+char mqttHost[48]   = "";
+int  mqttPort       = 1883;
+bool mqttTls        = false;
+bool mqttConectado  = false;
+bool wifiConectado  = false;
+bool erroWifiPendente = false;
+bool erroMqttPendente = false;
+unsigned long lastWifiRetry = 0;
+unsigned long lastMqttRetry = 0;
+unsigned long startMs = 0;
+int  modo = 0;
+
+#define WIFI_TIMEOUT_MS     20000
+#define MQTT_TIMEOUT_MS     45000
+#define WIFI_RETRY_MS       15000
+#define MQTT_RETRY_MS       10000
+#define MQTT_MAX_TENTATIVAS 8
+#define MQTT_SOCKET_TIMEOUT 20
+#define TCP_SOCKET_TIMEOUT  20
+
+// ── Topicos MQTT ──────────────────────────────────────────────
+#define T_TEMP    "microverdes/sensor/temp"
+#define T_AR      "microverdes/sensor/ar"
+#define T_LUZ     "microverdes/sensor/luz"
+#define T_UMIDADE "microverdes/sensor/umidade"
+#define T_NEBLINA "microverdes/status/neblina"
+#define T_IRR     "microverdes/cmd/irrigacao"
+#define T_DEVICE  "microverdes/device/info"
+#define T_BANDEJA "microverdes/bandeja/"
+
+// ── Intervalos ────────────────────────────────────────────────
+const unsigned long IV_SENSORES = 10000;
+const unsigned long IV_BANDEJAS = 15000;
+const unsigned long IV_DEVICE   = 30000;
+const unsigned long IV_DISPLAY  = 1000;
+
+// ── Instancias das structs ────────────────────────────────────
+SensorSim simTemp = {27.0, 22.0, 32.0,   0.3,  0.05};
+SensorSim simAr   = {75.0, 55.0, 92.0,   0.8,  0.10};
+SensorSim simSolo = {68.0, 30.0, 95.0,   1.2, -0.15};
+SensorSim simLuz  = {800.0,50.0, 3500.0,60.0,  2.0 };
+
+Bandeja bandejas[] = {
+  {"A1","Girassol A1", 72.0, 1.0},
+  {"B2","Rabanete B2", 65.0, 1.2},
+  {"C1","Ervilha C1",  55.0, 1.4},
+  {"D3","Brocolis D3", 69.0, 0.9},
+  {"E1","Mostarda E1", 48.0, 1.1},
+};
+
+Pub ultimas[3];
+int pubCount = 0;
+
+bool irrigacaoOn = false;
+bool neblinaOn   = false;
+
+// ── Numpad ────────────────────────────────────────────────────
+const char NP_DIGITS[10] = {'1','2','3','4','5','6','7','8','9','0'};
+const char NP_ACTIONS[5] = {'D','C','.', ':', 'O'};
+const char* NP_LABELS[5] = {"DEL","CLR",".",":","OK"};
+
+int npLinha    = 0;
+int npCol      = 0;
+int campoAtivo = 0;
+
+char editBroker[64] = "";
+char editDev[20]    = "";
+
+#define PORTA_PAD ":1883"
+
+// ── Timers / debounce ─────────────────────────────────────────
+unsigned long lastSensores = 0;
+unsigned long lastBandejas = 0;
+unsigned long lastDevice   = 0;
+unsigned long lastDisplay  = 0;
+unsigned long lastBtn0     = 0;
+unsigned long lastBtn1     = 0;
+const int DEBOUNCE = 200;
+
+// ═══════════════════════════════════════════════════════════════
+//  SIMULACAO
+// ═══════════════════════════════════════════════════════════════
+
+float simPasso(SensorSim &s) {
+  float r = ((float)random(-100,100) / 100.0) * s.delta;
+  s.tend += ((float)random(-10,10) / 1000.0);
+  s.tend  = constrain(s.tend, -0.5, 0.5);
+  s.valor = constrain(s.valor + r + s.tend, s.minVal, s.maxVal);
+  return s.valor;
+}
+
+float simBandeja(Bandeja &b) {
+  b.u += ((float)random(-50,50) / 100.0) * b.d - 0.3;
+  if (irrigacaoOn) b.u += 2.5;
+  b.u = constrain(b.u, 20.0, 98.0);
+  return b.u;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PUBLICACOES MQTT
+// ═══════════════════════════════════════════════════════════════
+
+void regPub(const char* t, const char* v) {
+  ultimas[0] = ultimas[1];
+  ultimas[1] = ultimas[2];
+  unsigned long s = (millis()-startMs)/1000, m = s/60, h = m/60;
+  s%=60; m%=60; h%=24;
+  snprintf(ultimas[2].t, sizeof(ultimas[2].t), "%s", t);
+  snprintf(ultimas[2].v, sizeof(ultimas[2].v), "%s", v);
+  snprintf(ultimas[2].h, sizeof(ultimas[2].h), "%02lu:%02lu:%02lu", h, m, s);
+  if (pubCount < 3) pubCount++;
+}
+
+void pub(const char* t, const char* v, bool r = true) {
+  mqttClient.publish(t, v, r);
+  regPub(t, v);
+}
+
+void publicarSensores() {
+  char buf[16];
+  float temp = simPasso(simTemp);
+  float ar   = simPasso(simAr);
+  float lux  = simPasso(simLuz);
+  float solo = simPasso(simSolo);
+  dtostrf(temp, 5, 1, buf); pub(T_TEMP,    buf);
+  dtostrf(ar,   5, 1, buf); pub(T_AR,      buf);
+  dtostrf(lux,  6, 0, buf); pub(T_LUZ,     buf);
+  dtostrf(solo, 5, 1, buf); pub(T_UMIDADE, buf);
+  pub(T_IRR,     irrigacaoOn ? "ON" : "OFF");
+  pub(T_NEBLINA, neblinaOn   ? "ON" : "OFF");
+}
+
+void publicarBandejas() {
+  StaticJsonDocument<128> doc;
+  char topico[48], payload[128];
+  for (int i = 0; i < 5; i++) {
+    float u = simBandeja(bandejas[i]);
+    doc.clear();
+    doc["nome"]    = bandejas[i].nome;
+    doc["umidade"] = (int)round(u);
+    serializeJson(doc, payload);
+    snprintf(topico, sizeof(topico), "%s%s", T_BANDEJA, bandejas[i].id);
+    mqttClient.publish(topico, payload, true);
+  }
+  char v[8];
+  snprintf(v, sizeof(v), "%d%%", (int)round(bandejas[4].u));
+  char t2[48];
+  snprintf(t2, sizeof(t2), "%s%s", T_BANDEJA, bandejas[4].id);
+  regPub(t2, v);
+}
+
+void publicarDevice() {
+  StaticJsonDocument<256> doc;
+  doc["id"]  = cfgDevName;
+  doc["ip"]  = WiFi.localIP().toString();
+  doc["mac"] = WiFi.macAddress();
+  doc["rssi"]= WiFi.RSSI();
+  unsigned long ms = millis()-startMs;
+  unsigned long s  = ms/1000, m = s/60, h = m/60;
+  s%=60; m%=60; h%=24;
+  char up[20];
+  snprintf(up, sizeof(up), "%02luh%02lum%02lus", h, m, s);
+  doc["uptime"]    = up;
+  doc["heap_free"] = ESP.getFreeHeap();
+  doc["modo"]      = "simulacao";
+  char payload[256];
+  serializeJson(doc, payload);
+  pub(T_DEVICE, payload);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  NUMPAD
+// ═══════════════════════════════════════════════════════════════
+
+void desenharNpTecla(int linha, int col, bool ativa) {
+  int KY0 = 108, KY1 = 130, KH = 20;
+  uint16_t bg = ativa ? C_KEY_ACT : C_KEY_BG;
+
+  if (linha == 0) {
+    int kw = 28, gap = 3;
+    int kx = 4 + col*(kw+gap);
+    tft.fillRoundRect(kx, KY0, kw, KH, 3, bg);
+    tft.drawRoundRect(kx, KY0, kw, KH, 3, ativa ? C_GREEN : C_DIVIDER);
+    tft.setTextColor(ativa ? C_WHITE : C_LGRAY, bg);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextSize(1);
+    char lbl[2] = {NP_DIGITS[col], 0};
+    tft.drawString(lbl, kx+kw/2, KY0+KH/2);
+  } else {
+    int widths[5] = {38, 38, 28, 28, 38};
+    int kx = 4;
+    for (int i = 0; i < col; i++) kx += widths[i]+3;
+    int kw = widths[col];
+    tft.fillRoundRect(kx, KY1, kw, KH, 3, bg);
+    tft.drawRoundRect(kx, KY1, kw, KH, 3, ativa ? C_GREEN : C_DIVIDER);
+    tft.setTextColor(ativa ? C_WHITE : C_LGRAY, bg);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextSize(1);
+    tft.drawString(NP_LABELS[col], kx+kw/2, KY1+KH/2);
+  }
+}
+
+void desenharNumpad() {
+  for (int c = 0; c < 10; c++) desenharNpTecla(0, c, (npLinha==0 && npCol==c));
+  for (int c = 0; c < 5;  c++) desenharNpTecla(1, c, (npLinha==1 && npCol==c));
+}
+
+void moverCursor() {
+  if (npLinha == 0) {
+    npCol++;
+    if (npCol >= 10) { npCol = 0; npLinha = 1; }
+  } else {
+    npCol++;
+    if (npCol >= 5) { npCol = 0; npLinha = 0; }
+  }
+}
+
+bool pressionarTecla() {
+  char* campo  = (campoAtivo == 0) ? editBroker : editDev;
+  int   maxLen = (campoAtivo == 0) ? 63 : 19;
+  int   len    = strlen(campo);
+
+  if (npLinha == 0) {
+    if (len < maxLen) { campo[len] = NP_DIGITS[npCol]; campo[len+1] = '\0'; }
+    return false;
+  }
+
+  char a = NP_ACTIONS[npCol];
+  if (a == 'D') { if (len > 0) campo[len-1] = '\0'; return false; }
+  if (a == 'C') {
+    campo[0] = '\0';
+    return false;
+  }
+  if (a == '.' || a == ':') {
+    if (len < maxLen) { campo[len] = a; campo[len+1] = '\0'; }
+    return false;
+  }
+  if (a == 'O') {
+    if (campoAtivo == 0) {
+      if (!strchr(editBroker, ':'))
+        strncat(editBroker, PORTA_PAD, sizeof(editBroker)-strlen(editBroker)-1);
+      campoAtivo = 1; npLinha = 0; npCol = 0;
+    } else {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TELAS
+// ═══════════════════════════════════════════════════════════════
+
+void desenharProvisionamento() {
+  tft.fillScreen(C_BG);
+
+  tft.fillRect(0, 0, TFT_W, 22, C_HEADER);
+  tft.setTextColor(C_GREEN, C_HEADER);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextSize(1);
+  tft.drawString("sauderealmicroverdes.club", 6, 11);
+  tft.setTextColor(C_AMBER, C_HEADER);
+  tft.setTextDatum(MR_DATUM);
+  tft.drawString("CONFIGURACAO", TFT_W-6, 11);
+
+  int y = 27;
+
+  // campo broker
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(campoAtivo==0 ? C_GREEN : C_GRAY, C_BG);
+  tft.drawString("Broker MQTT  (ip:porta):", 6, y);
+  y += 11;
+
+  uint16_t bgBk = (campoAtivo == 0) ? C_ACTIVE : C_INACTIVE;
+  tft.fillRoundRect(4, y, 230, 18, 3, bgBk);
+  tft.drawRoundRect(4, y, 230, 18, 3, campoAtivo==0 ? C_GREEN : C_DIVIDER);
+
+  tft.setTextColor(C_WHITE, bgBk);
+  tft.setTextDatum(ML_DATUM);
+  char db[66];
+  snprintf(db, sizeof(db), "%s%s", editBroker, campoAtivo==0 ? "_" : "");
+  tft.drawString(db, 8, y+9);
+  y += 24;
+
+  // campo devname
+  tft.setTextColor(campoAtivo==1 ? C_GREEN : C_GRAY, C_BG);
+  tft.setTextDatum(ML_DATUM);
+  tft.drawString("Nome dispositivo:", 6, y);
+  y += 11;
+  uint16_t bgDv = (campoAtivo == 1) ? C_ACTIVE : C_INACTIVE;
+  tft.fillRoundRect(4, y, 150, 18, 3, bgDv);
+  tft.drawRoundRect(4, y, 150, 18, 3, campoAtivo==1 ? C_GREEN : C_DIVIDER);
+  tft.setTextColor(C_WHITE, bgDv);
+  tft.setTextDatum(ML_DATUM);
+  char dd[22];
+  snprintf(dd, sizeof(dd), "%s%s", editDev, campoAtivo==1 ? "_" : "");
+  tft.drawString(dd, 8, y+9);
+
+  tft.setTextColor(C_GRAY, C_BG);
+  tft.setTextDatum(MR_DATUM);
+  tft.drawString("BTN0=nav  BTN1=ok", TFT_W-4, y+9);
+
+  desenharNumpad();
+}
+
+void desenharMonitor() {
+  tft.fillScreen(C_BG);
+
+  // header
+  tft.fillRect(0, 0, TFT_W, 24, C_HEADER);
+  tft.setTextColor(C_GREEN, C_HEADER);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextSize(1);
+  tft.drawString("sauderealmicroverdes.club", 6, 12);
+  uint16_t cm = mqttConectado ? C_GREEN : C_RED;
+  tft.fillCircle(TFT_W-62, 12, 4, cm);
+  tft.setTextColor(cm, C_HEADER);
+  tft.setTextDatum(ML_DATUM);
+  tft.drawString(mqttConectado ? "MQTT ON" : "MQTT OFF", TFT_W-54, 12);
+
+  // linhas de info — sem lambda, funcao inline simples
+  int y = 32;
+  int lh = 17;
+
+  tft.setTextColor(C_GRAY,  C_BG); tft.setTextDatum(ML_DATUM); tft.drawString("IP local :", 6, y);
+  tft.setTextColor(C_WHITE, C_BG); tft.drawString(wifiConectado ? WiFi.localIP().toString().c_str() : "...", 84, y);
+  y += lh;
+
+  tft.setTextColor(C_GRAY,  C_BG); tft.drawString("Broker   :", 6, y);
+  tft.setTextColor(C_LGRAY, C_BG); tft.drawString(cfgBroker, 84, y);
+  y += lh;
+
+  unsigned long ms = millis()-startMs;
+  unsigned long s  = ms/1000, m = s/60, h = m/60;
+  s%=60; m%=60; h%=24;
+  char up[20];
+  snprintf(up, sizeof(up), "%02luh %02lum %02lus", h, m, s);
+  tft.setTextColor(C_GRAY,  C_BG); tft.drawString("Uptime   :", 6, y);
+  tft.setTextColor(C_AMBER, C_BG); tft.drawString(up, 84, y);
+  y += lh;
+
+  tft.setTextColor(C_GRAY,    C_BG); tft.drawString("Device   :", 6, y);
+  tft.setTextColor(C_DKGREEN, C_BG); tft.drawString(cfgDevName, 84, y);
+  y += lh;
+
+  // divisoria
+  y += 2;
+  tft.drawFastHLine(0, y, TFT_W, C_DIVIDER);
+  y += 5;
+  tft.setTextColor(C_GRAY, C_BG);
+  tft.drawString("Ultimas publicacoes:", 6, y);
+  y += 13;
+
+  // header tabela
+  tft.fillRect(0, y, TFT_W, 13, C_DIVIDER);
+  tft.setTextColor(C_LGRAY, C_DIVIDER);
+  tft.setTextDatum(ML_DATUM); tft.drawString("Topico", 6, y+6);
+  tft.setTextDatum(MR_DATUM);
+  tft.drawString("Valor", 240, y+6);
+  tft.drawString("Hora", TFT_W-4, y+6);
+  y += 13;
+
+  // linhas da tabela
+  int vis = min(pubCount, 3);
+  int ini = 3 - vis;
+  for (int i = 0; i < 3; i++) {
+    uint16_t cRow = (i % 2 == 0) ? C_ROW_EVEN : C_ROW_ODD;
+    tft.fillRect(0, y, TFT_W, 16, cRow);
+    if (i < vis) {
+      int idx = ini + i;
+      String top = String(ultimas[idx].t);
+      top.replace("microverdes/", "");
+      tft.setTextColor(C_WHITE, cRow); tft.setTextDatum(ML_DATUM);
+      tft.drawString(top.substring(0, 22), 6, y+8);
+      tft.setTextColor(C_GREEN, cRow); tft.setTextDatum(MR_DATUM);
+      tft.drawString(ultimas[idx].v, 240, y+8);
+      tft.setTextColor(C_GRAY,  cRow);
+      tft.drawString(ultimas[idx].h, TFT_W-4, y+8);
+    } else {
+      tft.setTextColor(C_DIVIDER, cRow); tft.setTextDatum(ML_DATUM);
+      tft.drawString("---", 6, y+8);
+    }
+    y += 16;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  NVS + HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+bool carregarConfig() {
+  prefs.begin(NVS_NS, true);
+  bool ok = prefs.getBool(NVS_DONE, false);
+  if (ok) {
+    prefs.getString(NVS_BROKER,  cfgBroker,  sizeof(cfgBroker));
+    prefs.getString(NVS_DEVNAME, cfgDevName, sizeof(cfgDevName));
+    normalizarBroker(cfgBroker);
+  }
+  prefs.end();
+  return ok;
+}
+
+void salvarConfig() {
+  prefs.begin(NVS_NS, false);
+  prefs.putString(NVS_BROKER,  cfgBroker);
+  prefs.putString(NVS_DEVNAME, cfgDevName);
+  prefs.putBool(NVS_DONE, true);
+  prefs.end();
+}
+
+void limparConfig() {
+  prefs.begin(NVS_NS, false);
+  prefs.clear();
+  prefs.end();
+}
+
+void gerarNome(char* buf, int maxLen) {
+  uint32_t r = esp_random() & 0xFFFF;
+  snprintf(buf, maxLen, "SR-2026-%04X", r);
+}
+
+void normalizarBroker(char* s) {
+  if (!s) return;
+  int start = 0;
+  while (s[start] == ' ' || s[start] == '\t') start++;
+  if (start > 0) memmove(s, s + start, strlen(s + start) + 1);
+  int len = strlen(s);
+  while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t')) s[--len] = '\0';
+}
+
+bool parseBroker(const char* url, char* host, int hmax, int* port) {
+  if (!url || !host || !port || strlen(url) == 0) return false;
+  char tmp[64];
+  strncpy(tmp, url, sizeof(tmp) - 1);
+  tmp[sizeof(tmp) - 1] = '\0';
+  char* c = strrchr(tmp, ':');
+  if (!c || c == tmp) return false;
+  *c = '\0';
+  strncpy(host, tmp, hmax - 1);
+  host[hmax - 1] = '\0';
+  *port = atoi(c + 1);
+  return (*port > 0 && *port <= 65535 && strlen(host) > 0);
+}
+
+bool brokerUsaTls(int port) {
+  return (port == 8883 || port == 8884);
+}
+
+void prepararSocketMqtt() {
+  mqttClient.disconnect();
+  wifiClientPlain.stop();
+  wifiClientSecure.stop();
+  if (mqttTls) {
+    wifiClientSecure.setInsecure();
+    wifiClientSecure.setTimeout(TCP_SOCKET_TIMEOUT);
+  } else {
+    wifiClientPlain.setTimeout(TCP_SOCKET_TIMEOUT);
+  }
+}
+
+bool configurarMqttClient() {
+  normalizarBroker(cfgBroker);
+  if (!parseBroker(cfgBroker, mqttHost, sizeof(mqttHost), &mqttPort)) {
+    Serial.println("[MQTT] broker invalido");
+    return false;
+  }
+  mqttTls = brokerUsaTls(mqttPort);
+  prepararSocketMqtt();
+  if (mqttTls) {
+    mqttClient.setClient(wifiClientSecure);
+    Serial.printf("[MQTT] TLS %s:%d\n", mqttHost, mqttPort);
+  } else {
+    mqttClient.setClient(wifiClientPlain);
+    Serial.printf("[MQTT] TCP %s:%d\n", mqttHost, mqttPort);
+  }
+  mqttClient.setServer(mqttHost, mqttPort);
+  mqttClient.setCallback(mqttCallback);
+  mqttClient.setBufferSize(512);
+  mqttClient.setSocketTimeout(MQTT_SOCKET_TIMEOUT);
+  mqttClient.setKeepAlive(60);
+  return true;
+}
+
+bool testarTcpBroker() {
+  tcpProbeClient.stop();
+  tcpProbeClient.setTimeout(TCP_SOCKET_TIMEOUT);
+  Serial.printf("[TCP] testando %s:%d\n", mqttHost, mqttPort);
+  unsigned long t0 = millis();
+  bool ok = tcpProbeClient.connect(mqttHost, mqttPort);
+  unsigned long ms = millis() - t0;
+  Serial.printf("[TCP] %s em %lu ms\n", ok ? "OK" : "FALHA", ms);
+  tcpProbeClient.stop();
+  return ok;
+}
+
+const char* nomeStatusMqtt(int state) {
+  switch (state) {
+    case -4: return "timeout MQTT";
+    case -3: return "conexao perdida";
+    case -2: return "TCP recusado/bloqueado";
+    case -1: return "desconectado";
+    case  1: return "protocolo invalido";
+    case  2: return "client id invalido";
+    case  3: return "broker indisponivel";
+    case  4: return "usuario/senha errados";
+    case  5: return "nao autorizado";
+    default: return "erro desconhecido";
+  }
+}
+
+bool tentarConectarMqttOnce() {
+  if (!configurarMqttClient()) return false;
+  if (strlen(cfgDevName) == 0) gerarNome(cfgDevName, sizeof(cfgDevName));
+  cfgDevName[sizeof(cfgDevName) - 1] = '\0';
+
+  Serial.printf("[MQTT] client_id=%s\n", cfgDevName);
+
+  if (MQTT_USER && MQTT_USER[0] != '\0')
+    return mqttClient.connect(cfgDevName, MQTT_USER, MQTT_PASS);
+  return mqttClient.connect(cfgDevName);
+}
+
+const char* nomeStatusWifi() {
+  switch (WiFi.status()) {
+    case WL_IDLE_STATUS:     return "idle";
+    case WL_NO_SSID_AVAIL:     return "rede nao encontrada";
+    case WL_CONNECT_FAILED:    return "senha incorreta";
+    case WL_CONNECTION_LOST:   return "conexao perdida";
+    case WL_DISCONNECTED:      return "desconectado";
+    default:                   return "falha desconhecida";
+  }
+}
+
+bool conectarWifi() {
+  tft.fillScreen(C_BG);
+  tft.setTextColor(C_AMBER, C_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(1);
+  tft.drawString("Conectando WiFi...", TFT_W/2, TFT_H/2-16);
+  tft.drawString(WIFI_SSID, TFT_W/2, TFT_H/2);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true, true);
+  delay(100);
+  WiFi.setSleep(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  Serial.printf("[WiFi] conectando a %s\n", WIFI_SSID);
+
+  unsigned long inicio = millis();
+  int dots = 0;
+  while (WiFi.status() != WL_CONNECTED && millis() - inicio < WIFI_TIMEOUT_MS) {
+    delay(500);
+    dots = (dots + 1) % 4;
+    char msg[24];
+    snprintf(msg, sizeof(msg), "aguarde%s", dots == 0 ? "" : dots == 1 ? "." : dots == 2 ? ".." : "...");
+    tft.fillRect(0, TFT_H/2 + 12, TFT_W, 12, C_BG);
+    tft.setTextColor(C_GRAY, C_BG);
+    tft.drawString(msg, TFT_W/2, TFT_H/2 + 18);
+  }
+
+  wifiConectado = (WiFi.status() == WL_CONNECTED);
+  if (wifiConectado) {
+    Serial.printf("[WiFi] OK %s RSSI %d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    tft.fillScreen(C_BG);
+    tft.setTextColor(C_GREEN, C_BG);
+    tft.drawString("WiFi conectado!", TFT_W/2, TFT_H/2 - 10);
+    tft.setTextColor(C_WHITE, C_BG);
+    tft.drawString(WiFi.localIP().toString().c_str(), TFT_W/2, TFT_H/2 + 8);
+    delay(800);
+    return true;
+  }
+
+  Serial.printf("[WiFi] FALHA status=%d (%s)\n", WiFi.status(), nomeStatusWifi());
+  tft.fillScreen(C_BG);
+  tft.setTextColor(C_RED, C_BG);
+  tft.drawString("Erro ao conectar WiFi", TFT_W/2, TFT_H/2 - 30);
+  tft.setTextColor(C_AMBER, C_BG);
+  tft.drawString(WIFI_SSID, TFT_W/2, TFT_H/2 - 14);
+  tft.setTextColor(C_GRAY, C_BG);
+  tft.drawString(nomeStatusWifi(), TFT_W/2, TFT_H/2 + 2);
+  tft.drawString("MQTT nao sera iniciado", TFT_W/2, TFT_H/2 + 16);
+  tft.drawString("BTN1 = tentar novamente", TFT_W/2, TFT_H/2 + 30);
+  return false;
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String msg = "";
+  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
+  if (String(topic) == T_IRR)     irrigacaoOn = (msg == "ON");
+  if (String(topic) == T_NEBLINA) neblinaOn   = (msg == "ON");
+}
+
+void mostrarErroTcp() {
+  tft.fillScreen(C_BG);
+  tft.setTextColor(C_RED, C_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(1);
+  tft.drawString("TCP falhou no broker", TFT_W/2, TFT_H/2 - 30);
+  tft.setTextColor(C_AMBER, C_BG);
+  tft.drawString(cfgBroker, TFT_W/2, TFT_H/2 - 14);
+  tft.setTextColor(C_GRAY, C_BG);
+  tft.drawString("Rede pode bloquear porta 1883", TFT_W/2, TFT_H/2 + 2);
+  tft.drawString("Teste outro WiFi/hotspot", TFT_W/2, TFT_H/2 + 16);
+  if (modo == 0) tft.drawString("BTN1 = tentar novamente", TFT_W/2, TFT_H/2 + 30);
+}
+
+void mostrarErroMqtt(int state) {
+  tft.fillScreen(C_BG);
+  tft.setTextColor(C_RED, C_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(1);
+  tft.drawString("Erro ao conectar MQTT", TFT_W/2, TFT_H/2 - 34);
+  tft.setTextColor(C_AMBER, C_BG);
+  tft.drawString(cfgBroker, TFT_W/2, TFT_H/2 - 18);
+  tft.setTextColor(C_GRAY, C_BG);
+  char det[48];
+  snprintf(det, sizeof(det), "%s (%d)", nomeStatusMqtt(state), state);
+  tft.drawString(det, TFT_W/2, TFT_H/2 - 2);
+  tft.drawString(mqttTls ? "porta TLS (8883)" : "porta TCP (1883)", TFT_W/2, TFT_H/2 + 12);
+  if (state == -2)
+    tft.drawString("WiFi OK, mas TCP bloqueado", TFT_W/2, TFT_H/2 + 26);
+  else
+    tft.drawString("Verifique IP, porta e broker", TFT_W/2, TFT_H/2 + 26);
+  if (modo == 0) tft.drawString("BTN1 = tentar novamente", TFT_W/2, TFT_H/2 + 40);
+}
+
+bool conectarMqtt() {
+  if (!wifiConectado || WiFi.status() != WL_CONNECTED) return false;
+
+  delay(800);
+
+  tft.fillScreen(C_BG);
+  tft.setTextColor(C_AMBER, C_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(1);
+  tft.drawString("Conectando ao broker...", TFT_W/2, TFT_H/2 - 24);
+  tft.drawString(cfgBroker, TFT_W/2, TFT_H/2 - 8);
+
+  if (!configurarMqttClient()) return false;
+
+  tft.setTextColor(C_GRAY, C_BG);
+  tft.drawString("Testando TCP...", TFT_W/2, TFT_H/2 + 10);
+  if (!testarTcpBroker()) {
+    mostrarErroTcp();
+    return false;
+  }
+
+  unsigned long inicio = millis();
+  int tentativa = 0;
+  int ultimoErro = -4;
+
+  while (!mqttClient.connected() && millis() - inicio < MQTT_TIMEOUT_MS && tentativa < MQTT_MAX_TENTATIVAS) {
+    tentativa++;
+    Serial.printf("[MQTT] tentativa %d em %s:%d (%s)\n",
+                  tentativa, mqttHost, mqttPort, mqttTls ? "TLS" : "TCP");
+
+    char msg[28];
+    snprintf(msg, sizeof(msg), "MQTT %d/%d", tentativa, MQTT_MAX_TENTATIVAS);
+    tft.fillRect(0, TFT_H/2 + 18, TFT_W, 12, C_BG);
+    tft.setTextColor(C_GRAY, C_BG);
+    tft.drawString(msg, TFT_W/2, TFT_H/2 + 24);
+
+    if (tentarConectarMqttOnce()) {
+      mqttConectado = true;
+      mqttClient.subscribe(T_IRR);
+      mqttClient.subscribe(T_NEBLINA);
+      Serial.println("[MQTT] conectado");
+      tft.fillScreen(C_BG);
+      tft.setTextColor(C_GREEN, C_BG);
+      tft.drawString("MQTT conectado!", TFT_W/2, TFT_H/2);
+      delay(600);
+      return true;
+    }
+
+    ultimoErro = mqttClient.state();
+    Serial.printf("[MQTT] falhou state=%d (%s)\n", ultimoErro, nomeStatusMqtt(ultimoErro));
+    delay(2000);
+  }
+
+  mqttConectado = false;
+  mostrarErroMqtt(ultimoErro);
+  return false;
+}
+
+bool iniciarConexoes(bool salvarErroProvisionamento) {
+  if (!configurarMqttClient()) {
+    tft.fillScreen(C_BG);
+    tft.setTextColor(C_RED, C_BG);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextSize(1);
+    tft.drawString("Broker invalido", TFT_W/2, TFT_H/2 - 10);
+    tft.setTextColor(C_GRAY, C_BG);
+    tft.drawString("Use ip:porta (ex: 192.168.1.10:1883)", TFT_W/2, TFT_H/2 + 8);
+    if (salvarErroProvisionamento) erroMqttPendente = true;
+    return false;
+  }
+
+  if (!conectarWifi()) {
+    if (salvarErroProvisionamento) erroWifiPendente = true;
+    return false;
+  }
+
+  if (!conectarMqtt()) {
+    if (salvarErroProvisionamento) erroMqttPendente = true;
+    return false;
+  }
+
+  erroWifiPendente = false;
+  erroMqttPendente = false;
+  startMs = millis();
+  publicarSensores();
+  publicarBandejas();
+  publicarDevice();
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SETUP
+// ═══════════════════════════════════════════════════════════════
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+  randomSeed(esp_random());
+
+  pinMode(BTN0, INPUT_PULLUP);
+  pinMode(BTN1, INPUT_PULLUP);
+
+  tft.init();
+  tft.setRotation(1);
+  tft.fillScreen(C_BG);
+
+  // splash
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(1);
+  tft.setTextColor(C_GREEN,   C_BG); tft.drawString("sauderealmicroverdes.club", TFT_W/2, TFT_H/2-22);
+  tft.setTextColor(C_GRAY,    C_BG); tft.drawString("LilyGo T-Display S3",       TFT_W/2, TFT_H/2-6);
+  tft.setTextColor(C_AMBER,   C_BG); tft.drawString("iniciando...",               TFT_W/2, TFT_H/2+10);
+  tft.setTextColor(C_DIVIDER, C_BG); tft.drawString("segure BTN0 p/ resetar",    TFT_W/2, TFT_H/2+26);
+  delay(2000);
+
+  // reset forcado: BTN0 no boot
+  if (digitalRead(BTN0) == LOW) {
+    limparConfig();
+    tft.fillScreen(C_BG);
+    tft.setTextColor(C_RED, C_BG);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString("Configuracao apagada!", TFT_W/2, TFT_H/2);
+    tft.drawString("Reinicie o dispositivo.", TFT_W/2, TFT_H/2+14);
+    while (true) delay(1000);
+  }
+
+  bool configurado = carregarConfig();
+
+  if (configurado) {
+    modo = 1;
+    if (iniciarConexoes(false)) {
+      desenharMonitor();
+    } else {
+      lastWifiRetry = millis();
+      lastMqttRetry = millis();
+      desenharMonitor();
+    }
+  } else {
+    modo = 0;
+    editBroker[0] = '\0';
+    gerarNome(editDev, sizeof(editDev));
+    desenharProvisionamento();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LOOP
+// ═══════════════════════════════════════════════════════════════
+
+void loop() {
+
+  if (modo == 0) {
+    bool b0 = (digitalRead(BTN0) == LOW && millis()-lastBtn0 > DEBOUNCE);
+    bool b1 = (digitalRead(BTN1) == LOW && millis()-lastBtn1 > DEBOUNCE);
+
+    if (b0) {
+      lastBtn0 = millis();
+      moverCursor();
+      desenharProvisionamento();
+    }
+
+    if (b1) {
+      lastBtn1 = millis();
+
+      if (erroWifiPendente || erroMqttPendente) {
+        if (iniciarConexoes(true)) {
+          modo = 1;
+          desenharMonitor();
+        }
+        return;
+      }
+
+      bool pronto = pressionarTecla();
+      desenharProvisionamento();
+
+      if (pronto && strlen(editBroker) > 4) {
+        strncpy(cfgBroker,  editBroker, sizeof(cfgBroker)-1);
+        cfgBroker[sizeof(cfgBroker)-1] = '\0';
+        normalizarBroker(cfgBroker);
+        strncpy(cfgDevName, editDev, sizeof(cfgDevName)-1);
+        cfgDevName[sizeof(cfgDevName)-1] = '\0';
+        salvarConfig();
+        if (iniciarConexoes(true)) {
+          modo = 1;
+          desenharMonitor();
+        }
+      }
+    }
+    return;
+  }
+
+  // modo monitoramento
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiConectado = false;
+    mqttConectado = false;
+    if (millis() - lastWifiRetry >= WIFI_RETRY_MS) {
+      lastWifiRetry = millis();
+      conectarWifi();
+      if (wifiConectado) lastMqttRetry = 0;
+    }
+  } else {
+    wifiConectado = true;
+    if (!mqttClient.connected()) {
+      mqttConectado = false;
+      if (millis() - lastMqttRetry >= MQTT_RETRY_MS) {
+        lastMqttRetry = millis();
+        if (!configurarMqttClient()) {
+          Serial.println("[MQTT] broker invalido no monitor");
+        } else {
+          conectarMqtt();
+        }
+      }
+    } else {
+      mqttConectado = true;
+    }
+  }
+
+  if (mqttClient.connected()) mqttClient.loop();
+
+  unsigned long agora = millis();
+  if (agora-lastSensores >= IV_SENSORES) { lastSensores = agora; publicarSensores(); }
+  if (agora-lastBandejas >= IV_BANDEJAS) { lastBandejas = agora; publicarBandejas(); }
+  if (agora-lastDevice   >= IV_DEVICE)   { lastDevice   = agora; publicarDevice();   }
+  if (agora-lastDisplay  >= IV_DISPLAY)  { lastDisplay  = agora; desenharMonitor();  }
+
+  // BTN0 segurado 3s → apaga config e reinicia
+  if (digitalRead(BTN0) == LOW) {
+    if (millis()-lastBtn0 > 3000) { limparConfig(); ESP.restart(); }
+  } else {
+    lastBtn0 = millis();
+  }
+}
