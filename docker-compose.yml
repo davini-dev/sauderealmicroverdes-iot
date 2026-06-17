@@ -1,0 +1,86 @@
+# ════════════════════════════════════════════════════════════════
+#  🌱 Saúde Real Microverdes IoT — Docker Compose
+#
+#  2 serviços:
+#    1. server      — Node.js aggregator + HTTP API (porta 3000)
+#    2. greenhouse  — React dashboard via Nginx (porta 8080)
+#
+#  Broker MQTT externo: 49.13.124.109:1883 (autenticação anônima)
+#
+#  Uso:
+#    docker compose up -d          # subir tudo
+#    docker compose up -d --build  # reconstruir imagens
+#    docker compose logs -f server # ver logs do server
+#    docker compose down           # parar tudo
+#
+#  Acesso:
+#    Dashboard:    http://localhost:8080
+#    Server API:   http://localhost:3000/status
+#    MQTT Broker:  49.13.124.109:1883 (externo, anônimo)
+#
+#  ════════════════════════════════════════════════════════════════
+
+version: "3.9"
+
+x-common-logging: &common-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+networks:
+  microverdes:
+    driver: bridge
+    name: microverdes
+
+services:
+
+  # ════════════════════════════════════════════════════════
+  #  1. Server — MQTT Aggregator + HTTP API
+#  Conecta no broker 49.13.124.109:1883 (autenticação anônima)
+  # ════════════════════════════════════════════════════════
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: microverdes-server
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      MQTT_BROKER_URL: "49.13.124.109"
+      MQTT_BROKER_PORT: 1883
+    ports:
+      - "3000:3000"
+    networks:
+      - microverdes
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging: *common-logging
+
+  # ════════════════════════════════════════════════════════
+  #  2. Greenhouse — Dashboard React via Nginx
+#  Serve o build estático e proxia /api/* para o server
+  # ════════════════════════════════════════════════════════
+  greenhouse:
+    build:
+      context: ./greenhouse
+      dockerfile: Dockerfile
+    container_name: microverdes-greenhouse
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    networks:
+      - microverdes
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging: *common-logging

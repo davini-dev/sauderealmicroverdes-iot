@@ -31,11 +31,15 @@ function RssiBar({ rssi }: { rssi: number }) {
   );
 }
 
-function DevicePanel({ device }: { device: ReturnType<typeof useLiveData>['device'] }) {
+function DevicePanel({ device, source, mqttStatus }: {
+  device: ReturnType<typeof useLiveData>['device'];
+  source: 'servidor' | 'simulacao';
+  mqttStatus: string;
+}) {
   return (
     <div className="rounded-xl bg-slate-800 border border-slate-700 p-4 shadow-sm">
       <div className="flex items-center gap-2 mb-3">
-        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+        <div className={`w-2 h-2 rounded-full ${source === 'servidor' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
         <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">
           Dispositivo ESP32-S3 · LilyGo T-Display
         </span>
@@ -43,7 +47,7 @@ function DevicePanel({ device }: { device: ReturnType<typeof useLiveData>['devic
           {device.modo}
         </span>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div>
           <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">Device ID</p>
           <p className="text-xs font-mono font-bold text-emerald-400">{device.id}</p>
@@ -62,6 +66,12 @@ function DevicePanel({ device }: { device: ReturnType<typeof useLiveData>['devic
             <RssiBar rssi={device.rssi} />
             <span className="text-xs font-mono text-slate-300">{device.rssi} dBm</span>
           </div>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">MQTT</p>
+          <p className={`text-xs font-mono ${mqttStatus === 'conectado' ? 'text-emerald-400' : 'text-red-400'}`}>
+            {mqttStatus === 'conectado' ? '🟢 Conectado' : '🔴 Desconectado'}
+          </p>
         </div>
       </div>
     </div>
@@ -102,8 +112,8 @@ export default function App() {
             </nav>
             <div className="hidden sm:flex flex-col items-end gap-0.5">
               <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Ao Vivo · tick #{live.tickCount}
+                <div className={`w-1.5 h-1.5 rounded-full ${live.source === 'servidor' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                {live.source === 'servidor' ? 'Dados Reais' : 'Simulação'} · tick #{live.tickCount}
               </div>
               <p className="text-[10px] text-slate-400">{live.lastUpdated}</p>
             </div>
@@ -124,7 +134,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-        <DevicePanel device={live.device} />
+        <DevicePanel device={live.device} source={live.source} mqttStatus={live.mqttStatus} />
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
@@ -200,7 +210,7 @@ export default function App() {
             {' '}· {temperatureZones.length} zonas · {irrigationLines.length} linhas de irrigação
           </p>
           <p className="text-xs text-slate-400">
-            Simulação ao vivo (ESP32-S3) · tick #{live.tickCount} · {live.lastUpdated}
+            {live.source === 'servidor' ? 'Dados reais (ESP32-S3)' : 'Simulação local'} · tick #{live.tickCount} · {live.lastUpdated}
           </p>
         </div>
       </footer>

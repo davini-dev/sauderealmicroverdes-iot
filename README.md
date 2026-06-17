@@ -1,266 +1,152 @@
-# 🌱 Microverdes IoT - Automação com MQTT + EMQX Cloud + Render
+# 🌱 Saúde Real Microverdes IoT
 
-Automação completa de irrigação para microverdes usando Arduino, MQTT e AI.
+Automação completa de monitoramento para microverdes usando ESP32, MQTT e React.
 
-## 📋 Componentes
+## 📋 Arquitetura
 
 ```
-ESP32-C3 (Arduino)
-    ↓ WiFi
-EMQX Cloud (Broker MQTT gratuito)
+ESP32-S3 (LilyGo T-Display)
+    ↓ WiFi + MQTT (TCP 1883)
+Broker MQTT externo (49.13.124.109:1883, auth anônima)
     ↓
-Render.com (App Node.js rodando 24/7)
-    ↓
-Automação inteligente de irrigação
+server/ (Node.js — aggregator + HTTP API)
+    ↓ /dashboard-data
+greenhouse/ (React + Nginx — dashboard web)
 ```
 
 ## ✨ Características
 
-- ✅ Lê sensores de umidade, temperatura e luz
-- ✅ Controla irrigação automaticamente
-- ✅ Broker MQTT na nuvem (EMQX Cloud - grátis)
-- ✅ Script rodando 24/7 (Render.com - grátis)
-- ✅ Dashboard web (EMQX Cloud)
-- ✅ Sem manutenção de servidor
-- ✅ Acessível de qualquer lugar
+- ✅ Leitura de sensores: temperatura, umidade do ar, umidade do solo, luminosidade
+- ✅ Controle de irrigação e neblina (ON/OFF via MQTT)
+- ✅ 5 bandejas monitoradas individualmente (A1, B2, C1, D3, E1)
+- ✅ Dashboard web em tempo real (polling 3s)
+- ✅ Fallback automático para simulação se servidor indisponível
+- ✅ Docker Compose para deploy local
+- ✅ Broker MQTT externo (autenticação anônima)
 
 ## 🚀 Quick Start
 
-### 1. Criar conta EMQX Cloud
-```
-https://www.emqx.cloud
-Sign Up → New Deployment (Free)
-Copiar Broker ID: seu-id.emqx.cloud
-Criar usuário: iotbr, senha: sua_senha
+### Com Docker (recomendado)
+
+```bash
+# Clonar
+git clone <repo> && cd sauderealmicroverdes-iot
+
+# Subir tudo
+docker compose up -d --build
+
+# Ver logs
+docker compose logs -f server
+
+# Parar
+docker compose down
 ```
 
-### 2. Setup ESP32 (Arduino IDE)
-```
-- Abrir esp32_mqtt_arduino_cloud.ino
-- Atualizar: MQTT_BROKER = "seu-id.emqx.cloud"
-- Atualizar WiFi SSID e PASSWORD
-- Upload
+Acessos:
+- **Dashboard**: http://localhost:8080
+- **API**: http://localhost:3000/status
+
+### Sem Docker (desenvolvimento)
+
+**Server:**
+```bash
+cd server
+npm install
+MQTT_BROKER_URL=49.13.124.109 MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
 ```
 
-### 3. Deploy no Render
-```
-- GitHub: novo repo com este código
-- Render: New Web Service → GitHub
-- Variáveis de ambiente:
-  MQTT_BROKER = mqtt://seu-id.emqx.cloud:1883
-  MQTT_USER = iotbr
-  MQTT_PASSWORD = sua_senha
-- Deploy!
+**Greenhouse:**
+```bash
+cd greenhouse
+npm install
+npm run dev
 ```
 
-### 4. Verificar
-```
-Render Logs: "Conectado ao EMQX Cloud!"
-EMQX Dashboard: Connections mostra 2 clientes
-```
-
-## 📁 Arquivos
+## 📁 Estrutura
 
 ```
 .
-├── claude_mqtt_render.js      # Script principal (Render)
-├── esp32_mqtt_arduino_cloud.ino # Código Arduino/ESP32
-├── package.json               # Dependências Node.js
-├── .env.example              # Template de variáveis
-├── .gitignore                # Git ignore
-└── README.md                 # Este arquivo
+├── arduino/
+│   └── microverdes.ino          # Firmware ESP32-S3 (LilyGo T-Display)
+├── server/
+│   ├── claude_mqtt_render_aggregator.js  # Aggregator + HTTP API
+│   ├── Dockerfile
+│   └── package.json
+├── greenhouse/
+│   ├── src/                     # React + TypeScript + Tailwind
+│   │   ├── App.tsx
+│   │   ├── components/          # TemperatureZones, HumidityGauges, etc.
+│   │   └── data/
+│   │       ├── useLiveData.ts   # Hook: polling /dashboard-data
+│   │       └── sampleData.ts    # Dados iniciais / simulação
+│   ├── Dockerfile               # Build multi-stage → Nginx
+│   └── vite.config.ts
+├── docker-compose.yml
+└── docs/                        # Documentação auxiliar
 ```
+
+## 📡 Tópicos MQTT
+
+O ESP32 publica nos seguintes tópicos:
+
+| Tópico | Direção | Payload | Descrição |
+|---|---|---|---|
+| `microverdes/sensor/temp` | ESP32 → | `"27.5"` | Temperatura (°C) |
+| `microverdes/sensor/ar` | ESP32 → | `"72.3"` | Umidade do ar (%) |
+| `microverdes/sensor/luz` | ESP32 → | `"12500"` | Luminosidade (lux) |
+| `microverdes/sensor/umidade` | ESP32 → | `"65.8"` | Umidade do solo (%) |
+| `microverdes/status/neblina` | ESP32 → | `"ON"/"OFF"` | Status neblina |
+| `microverdes/cmd/irrigacao` | ESP32 ↔ | `"ON"/"OFF"` | Comando irrigação |
+| `microverdes/device/info` | ESP32 → | JSON | Info do dispositivo |
+| `microverdes/bandeja/{id}` | ESP32 → | JSON | Umidade por bandeja |
+
+Bandejas: `A1` (Girassol), `B2` (Rabanete), `C1` (Ervilha), `D3` (Brócolis), `E1` (Mostarda)
 
 ## 🔧 Configuração
 
-### Variáveis de Ambiente (Render)
+### Variáveis de Ambiente (Server)
 
-Adicionar em Environment:
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `MQTT_BROKER_URL` | `49.13.124.109` | IP do broker MQTT |
+| `MQTT_BROKER_PORT` | `1883` | Porta TCP |
+| `PORT` | `3000` | Porta HTTP do servidor |
 
-```env
-MQTT_BROKER=mqtt://seu-id.emqx.cloud:1883
-MQTT_USER=iotbr
-MQTT_PASSWORD=sua_senha_forte
-NODE_ENV=production
-PORT=3000
-```
+### ESP32 (Arduino)
 
-### Arduino ESP32-C3
-
-Editar linhas no `.ino`:
-
+Editar no `.ino`:
 ```cpp
-const char* SSID = "seu_wifi";
-const char* PASSWORD = "sua_senha";
-const char* MQTT_BROKER = "seu-id.emqx.cloud";
-const char* MQTT_USER = "iotbr";
-const char* MQTT_PASSWORD = "sua_senha_forte";
+const char* WIFI_SSID = "Internet";
+const char* WIFI_PASS = "12345678";
+// Broker configurado via numpad no boot ou hardcoded
 ```
 
-## 📊 Tópicos MQTT
+## 🌐 API Endpoints
 
-### Publicado (ESP32 → Broker)
-- `sensores/umidade` - % (0-100)
-- `sensores/temperatura` - °C
-- `sensores/luz` - % (0-100)
+| Endpoint | Método | Descrição |
+|---|---|---|
+| `/status` | GET | Status completo (dispositivos, sensores, bandejas) |
+| `/dashboard-data` | GET | Dados formatados para o dashboard |
+| `/devices` | GET | Lista de dispositivos |
+| `/sensors` | GET | Agregação de sensores |
+| `/bandejas` | GET | Lista de bandejas com umidade |
+| `/cmd` | POST | Envia comando MQTT (`{"topico":"microverdes/cmd/irrigacao","valor":"ON"}`) |
+| `/health` | GET | Health check (`OK`) |
 
-### Subscrito (Broker → ESP32)
-- `irrigacao/ligar` - Ligar bomba
-- `irrigacao/desligar` - Desligar bomba
+## 🐳 Docker Compose
 
-## 🤖 Lógica de Automação
-
-```javascript
-// Automático (no Render)
-if (umidade < 50%) ligar irrigação
-if (umidade > 85%) desligar irrigação
-
-// Manual (via CLI)
-> ligar
-> desligar
-> status
+```yaml
+services:
+  server:       # Node.js — porta 3000
+  greenhouse:   # Nginx + React — porta 8080
 ```
 
-## 📈 Monitoramento
-
-### EMQX Cloud Dashboard
-```
-https://www.emqx.cloud
-→ Seu deployment
-→ Live Data: Ver mensagens em tempo real
-→ Connections: 2 clientes (ESP32 + Render)
-```
-
-### Render Logs
-```
-Dashboard → seu-app → Logs
-Ver tudo em tempo real
-```
-
-### Status HTTP
-```
-GET https://seu-app-xxxxx.onrender.com/status
-Retorna: JSON com sensores, uptime, etc
-```
-
-## 🐛 Troubleshooting
-
-### ESP32 não conecta WiFi
-```
-- Verificar SSID/senha
-- Serial Monitor mostra erro?
-- Verificar WiFi.begin() no código
-```
-
-### MQTT não conecta
-```
-- Broker ID correto? seu-id.emqx.cloud
-- Usuário/senha corretos em EMQX Dashboard?
-- Testar: mosquitto_sub -h seu-id.emqx.cloud -u iotbr -P senha
-```
-
-### Render pausou o app
-```
-- App pausar se sem requisições HTTP > 15 min
-- Solução: UptimeRobot monitora http://seu-app/health a cada 5 min
-- Ou usar /status como trigger do cron
-```
-
-### Logs vazios no Render
-```
-- Clicar "Clear Logs"
-- Aguardar 10 segundos
-- Recarregar
-```
-
-## 💡 Melhorias Futuras
-
-- [ ] Dashboard web custom
-- [ ] Histórico de dados (banco de dados)
-- [ ] Alertas por email
-- [ ] Múltiplos sensores
-- [ ] Controle via WhatsApp
-- [ ] IA para otimizar irrigação
-- [ ] Gráficos de umidade/temperatura
-
-## 📊 Limites (Camada Gratuita)
-
-### EMQX Cloud
-- Conexões: 10 (você usa 2)
-- Mensagens/mês: 1M (você usa ~500K)
-- Retenção: 1 hora
-
-### Render
-- Apps: 1
-- Memória: 512MB (você usa ~50MB)
-- Saída: 100GB/mês
-- Uptime: ~98%
-
-## 🔒 Segurança
-
-### Recomendado
-- [ ] Usar SSL/TLS (porta 8883 EMQX)
-- [ ] Alterar senha padrão MQTT
-- [ ] Usar .env para credenciais (nunca no Git)
-- [ ] ACL no EMQX (opcional)
-- [ ] Monitorar logs regularmente
-
-### Checklist
-```
-☐ Credenciais no .env (não no código)
-☐ .gitignore tem .env
-☐ Senha MQTT forte
-☐ EMQX ACL configurado
-☐ Render Environment protegido
-☐ IP whitelisting (opcional)
-```
-
-## 📞 Suporte
-
-### Documentação
-- [EMQX Cloud Docs](https://docs.emqx.com/en/cloud/latest/)
-- [Render Docs](https://render.com/docs)
-- [Arduino MQTT](https://github.com/knolleary/pubsubclient)
-
-### Comunidades
-- EMQX: https://github.com/emqx
-- Render: https://discord.gg/render
-- Arduino: https://forum.arduino.cc
+O greenhouse faz proxy reverso de `/api/*` para o server.
 
 ## 📝 Licença
 
-MIT - Use livremente!
+MIT
 
 ## 👤 Autor
 
-Iotbrlabs - Automação IoT para microverdes (litoral SP)
-
----
-
-**Status:** ✅ Rodando em produção  
-**Última atualização:** 2025-03-07  
-**Node:** 18.x+  
-**MQTT:** 5.x
-
-## 🎯 Próximos Passos
-
-1. Fazer fork deste repositório
-2. Criar conta EMQX Cloud + Render
-3. Deploy do ESP32
-4. Deploy no Render
-5. Monitorar e otimizar!
-
-```bash
-# Commands úteis
-npm install              # Instalar dependências
-npm start               # Rodar localmente
-node claude_mqtt_render.js  # Rodar direto
-
-# Git
-git clone seu-repo
-git add .
-git commit -m "Update"
-git push
-```
-
-**Bora automatizar seu cultivo! 🚀**
+Instituto Saúde Real Microverdes — IoT para cultivo sustentável

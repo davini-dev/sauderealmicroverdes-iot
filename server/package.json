@@ -1,0 +1,17 @@
+{
+  "name": "microverdes-server",
+  "version": "2.0.0",
+  "description": "MQTT Aggregator + HTTP API para Saúde Real Microverdes IoT",
+  "main": "claude_mqtt_render_aggregator.js",
+  "scripts": {
+    "start": "node claude_mqtt_render_aggregator.js",
+    "dev": "node --watch claude_mqtt_render_aggregator.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "mqtt": "^5.15.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

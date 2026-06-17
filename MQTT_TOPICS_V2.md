@@ -166,13 +166,13 @@ client.publish("devices/esp32_01/sensors", sensores);
 
 ```bash
 # Monitorar todos os dispositivos online
-mosquitto_sub -h broker.emqx.io -t "devices/+/online"
+mosquitto_sub -h 49.13.124.109 -p 1883 -t "devices/+/online"
 
 # Monitorar sensores de um dispositivo específico
-mosquitto_sub -h broker.emqx.io -t "devices/esp32_01/sensor/+"
+mosquitto_sub -h 49.13.124.109 -p 1883 -t "devices/esp32_01/sensor/+"
 
 # Monitorar todos os sensores de todos os dispositivos
-mosquitto_sub -h broker.emqx.io -t "devices/+/sensor/+"
+mosquitto_sub -h 49.13.124.109 -p 1883 -t "devices/+/sensor/+"
 ```
 
 ## Compatibilidade com Versão Anterior
@@ -294,5 +294,5 @@ client.publish("devices/esp32_01/sensor/umidade", "65");
 ## Referências
 
 - [MQTT Specification](https://mqtt.org/)
-- [EMQX Cloud Documentation](https://docs.emqx.com/en/cloud/latest/)
+- [MQTT.org](https://mqtt.org/)
 - [PubSubClient Arduino Library](https://github.com/knolleary/pubsubclient)

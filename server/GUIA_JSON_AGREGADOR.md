@@ -27,9 +27,9 @@ curl https://seu-app.onrender.com/status
     "memoria_mb": 45
   },
   "mqtt": {
-    "servidor": "xda56908.ala.us-east-1.emqxsl.com",
-    "porta": 8883,
-    "protocolo": "mqtts (TLS/SSL)",
+    "servidor": "49.13.124.109",
+    "porta": 1883,
+    "protocolo": "mqtt (TCP)",
     "status": "conectado",
     "certificado": "DigiCert Global Root G2"
   },
@@ -216,7 +216,7 @@ ESP32_1 (MQTT)          ESP32_2 (MQTT)
     ↓                       ↓
     └───────────┬───────────┘
                 ↓
-    EMQX Cloud Broker (porta 8883)
+    Broker MQTT 49.13.124.109:1883 (auth anônima)
                 ↓
     Node.js (Render.com)
     ├─ Recebe MQTT
@@ -350,9 +350,8 @@ fetch('/devices')
 "start": "node claude_mqtt_render_aggregator.js"
 
 # Environment variables
-MQTT_BROKER_URL=xda56908.ala.us-east-1.emqxsl.com
-MQTT_BROKER_PORT=8883
-MQTT_USER=esp32
+MQTT_BROKER_URL=49.13.124.109
+MQTT_BROKER_PORT=1883
 MQTT_PASSWORD=mhda
 NODE_ENV=production
 ```

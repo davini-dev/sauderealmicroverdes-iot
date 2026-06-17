@@ -1,127 +1,53 @@
-# ⚡ GitHub Setup - Versão Rápida (2 min)
+# 🚀 Quick Start — Saúde Real Microverdes IoT
 
-## 1️⃣ Criar repositório no GitHub
-
-Ir pra: https://github.com/new
-
-```
-Repository name: microverdes-iot
-Description: Automação de irrigação com MQTT, EMQX Cloud e Render
-Visibility: Public
-License: MIT
-```
-
-Copiar a URL: `https://github.com/seu_usuario/microverdes-iot.git`
-
----
-
-## 2️⃣ No seu computador
-
-### Clone:
-```bash
-git clone https://github.com/seu_usuario/microverdes-iot.git
-cd microverdes-iot
-```
-
-### Copie os arquivos:
-```bash
-# Você recebeu estes arquivos:
-# - README.md
-# - package.json
-# - .env.example
-# - .gitignore
-# - arduino/esp32_mqtt_arduino_cloud.ino
-# - nodejs/claude_mqtt_render.js
-# - nodejs/claude_mqtt_cloud.js
-# - docs/*.md
-
-# Colocar tudo no diretório microverdes-iot/
-```
-
----
-
-## 3️⃣ Fazer push
+## Docker (recomendado)
 
 ```bash
-git config --global user.name "Seu Nome"
-git config --global user.email "seu_email@gmail.com"
-
-git add .
-git commit -m "Initial commit: Microverdes IoT"
-git branch -M main
-git push -u origin main
+docker compose up -d --build
 ```
 
----
+Acessos:
+- Dashboard: http://localhost:8080
+- API: http://localhost:3000/status
 
-## ✅ Pronto!
+## Sem Docker
 
-```
-https://github.com/seu_usuario/microverdes-iot
-```
-
-Seu repositório está no GitHub! 🎉
-
----
-
-## 🎯 Próximo passo: Deploy no Render
-
-1. https://render.com
-2. Sign up → GitHub
-3. New Web Service
-4. Selecionar repositório
-5. Start Command: `npm start`
-6. Adicionar variáveis de ambiente (MQTT_*)
-7. Deploy!
-
----
-
-## 📝 Estrutura final
-
-```
-microverdes-iot/
-├── README.md
-├── package.json
-├── .env.example
-├── .gitignore
-├── arduino/
-│   └── esp32_mqtt_arduino_cloud.ino
-├── nodejs/
-│   ├── claude_mqtt_render.js (MAIN)
-│   └── claude_mqtt_cloud.js
-└── docs/
-    └── SETUP_*.md
-```
-
----
-
-## 🚨 Problemas?
-
-**Verificar arquivo por arquivo:**
+**Server:**
 ```bash
-# Estrutura
-tree
-
-# Status
-git status
-
-# Log
-git log --oneline
-
-# Remote
-git remote -v
+cd server && npm install
+MQTT_BROKER_URL=49.13.124.109 node claude_mqtt_render_aggregator.js
 ```
 
-**Se algo deu errado, deletar e começar:**
+**Greenhouse:**
 ```bash
-rm -rf .git
-git init
-git remote add origin SEU_URL
-git add .
-git commit -m "Initial commit"
-git push -u origin main
+cd greenhouse && npm install && npm run dev
 ```
 
----
+## Broker MQTT
 
-**Dúvidas?** Veja `GITHUB_SETUP.md` para versão completa.
+- **Host:** 49.13.124.109
+- **Porta:** 1883 (TCP)
+- **Autenticação:** Anônima
+
+## Tópicos
+
+```
+microverdes/sensor/temp       → Temperatura (°C)
+microverdes/sensor/ar         → Umidade do ar (%)
+microverdes/sensor/luz        → Luminosidade (lux)
+microverdes/sensor/umidade    → Umidade do solo (%)
+microverdes/status/neblina    → Neblina (ON/OFF)
+microverdes/cmd/irrigacao     → Irrigação (ON/OFF)
+microverdes/device/info       → Info dispositivo (JSON)
+microverdes/bandeja/{A1..E1}  → Bandeja (JSON)
+```
+
+## API
+
+```bash
+curl http://localhost:3000/dashboard-data
+curl http://localhost:3000/status
+curl -X POST http://localhost:3000/cmd \
+  -H "Content-Type: application/json" \
+  -d '{"topico":"microverdes/cmd/irrigacao","valor":"ON"}'
+```

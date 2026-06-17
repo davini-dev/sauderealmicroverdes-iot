@@ -1,268 +1,114 @@
-# 📦 Seu Repositório GitHub - Passo a Passo Agora
+# 🌱 Saúde Real Microverdes IoT — Comece Aqui
 
-Seus arquivos estão **prontos** em `/home/claude/github_repo/`
+Sistema completo de monitoramento para microverdes com ESP32, MQTT e dashboard React.
 
-Segue exatamente nesta ordem:
+## 📋 Arquitetura
 
----
-
-## 🔧 PASSO 1: Criar Repositório no GitHub (2 min)
-
-### Abra no navegador:
 ```
-https://github.com/new
-```
-
-### Preencha:
-```
-Repository name: microverdes-iot
-
-Description: Automação de irrigação para microverdes 
-             com MQTT, EMQX Cloud e Render
-
-Visibility: Public ✅ (deixe público)
-
-License: MIT
-
-Add .gitignore: Node
-
-Add a README: NÃO (já temos um bom)
+ESP32-S3 (LilyGo T-Display)
+    ↓ WiFi + MQTT (TCP 1883)
+Broker MQTT: 49.13.124.109:1883 (auth anônima)
+    ↓
+server/ (Node.js — aggregator + HTTP API)
+    ↓ /dashboard-data
+greenhouse/ (React + Nginx — dashboard web)
 ```
 
-### Clique: "Create repository"
-
-### Copie a URL que aparecer:
-```
-Exemplo: https://github.com/seu_usuario/microverdes-iot.git
-(seu_usuario muda pra seu usuário real)
-```
-
----
-
-## 💻 PASSO 2: No seu computador
-
-### Abra terminal/CMD no local que quer o projeto
-
-**Windows (PowerShell ou CMD):**
-```
-cd C:\Users\seu_usuario\Projetos
-```
-
-**Mac/Linux:**
-```
-cd ~/Documentos
-```
-
-### Clone o repositório vazio:
+## 🚀 Quick Start com Docker
 
 ```bash
-git clone https://github.com/seu_usuario/microverdes-iot.git
-cd microverdes-iot
+# Clonar
+git clone <repo> && cd sauderealmicroverdes-iot
+
+# Subir tudo
+docker compose up -d --build
+
+# Ver logs
+docker compose logs -f server
+
+# Acessar
+# Dashboard: http://localhost:8080
+# API:       http://localhost:3000/status
 ```
 
----
-
-## 📂 PASSO 3: Copiar seus arquivos
-
-Você recebeu uma **pasta com todos os arquivos prontos**.
-
-**Copie TUDO de `/home/claude/github_repo/` para `seu_usuario/microverdes-iot/`:**
-
-Pode ser:
-- Arrastar e soltar (Windows Explorer / Finder)
-- `cp -r` no terminal
-- Qualquer método que funcione pro você
-
-**Que quer ficar assim:**
+## 📁 Estrutura
 
 ```
-seu_usuario/microverdes-iot/
-├── README.md                          ✅
-├── package.json                       ✅
-├── .env.example                       ✅
-├── .gitignore                         ✅
-├── GITHUB_SETUP.md                    ✅
-├── QUICKSTART.md                      ✅
-│
-├── arduino/
-│   └── esp32_mqtt_arduino_cloud.ino   ✅
-│
-├── nodejs/
-│   ├── claude_mqtt_render.js          ✅
-│   └── claude_mqtt_cloud.js           ✅
-│
-└── docs/
-    ├── SETUP_RENDER_GRATUITO.md       ✅
-    ├── SETUP_EMQX_CLOUD_GRATUITO.md   ✅
-    └── SETUP_ARDUINO_IDE.md           ✅
+.
+├── arduino/microverdes.ino          # Firmware ESP32-S3
+├── server/                          # Node.js aggregator + API
+│   ├── claude_mqtt_render_aggregator.js
+│   ├── Dockerfile
+│   └── package.json
+├── greenhouse/                      # React dashboard
+│   ├── src/
+│   │   ├── App.tsx
+│   │   ├── components/              # TemperatureZones, HumidityGauges, etc.
+│   │   └── data/
+│   │       ├── useLiveData.ts       # Hook: polling /dashboard-data
+│   │       └── sampleData.ts
+│   ├── Dockerfile
+│   └── vite.config.ts
+├── docker-compose.yml
+└── docs/                            # Documentação auxiliar
 ```
 
-### Verificar:
+## 🔧 Desenvolvimento Local (sem Docker)
+
+**Server:**
 ```bash
-ls -la
-# Ou no Windows:
-dir
+cd server
+npm install
+MQTT_BROKER_URL=49.13.124.109 MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
 ```
 
----
-
-## ⚙️ PASSO 4: Configurar Git (primeira vez)
-
-**Execute no terminal:**
-
+**Greenhouse:**
 ```bash
-git config --global user.name "Seu Nome Completo"
-git config --global user.email "seu_email@gmail.com"
+cd greenhouse
+npm install
+npm run dev
 ```
 
-Exemplo:
-```bash
-git config --global user.name "João Silva"
-git config --global user.email "joao@gmail.com"
-```
+## 📡 Tópicos MQTT
 
----
+| Tópico | Payload | Descrição |
+|---|---|---|
+| `microverdes/sensor/temp` | `"27.5"` | Temperatura (°C) |
+| `microverdes/sensor/ar` | `"72.3"` | Umidade do ar (%) |
+| `microverdes/sensor/luz` | `"12500"` | Luminosidade (lux) |
+| `microverdes/sensor/umidade` | `"65.8"` | Umidade do solo (%) |
+| `microverdes/status/neblina` | `"ON"/"OFF"` | Status neblina |
+| `microverdes/cmd/irrigacao` | `"ON"/"OFF"` | Comando irrigação |
+| `microverdes/device/info` | JSON | Info do dispositivo |
+| `microverdes/bandeja/{id}` | JSON | Umidade por bandeja |
 
-## ✅ PASSO 5: Enviar tudo pro GitHub (3 comandos)
+Bandejas: `A1` (Girassol), `B2` (Rabanete), `C1` (Ervilha), `D3` (Brócolis), `E1` (Mostarda)
 
-**Execute em sequência:**
+## 🌐 API Endpoints
 
-### Comando 1: Adicionar tudo
-```bash
-git add .
-```
+| Endpoint | Descrição |
+|---|---|
+| `GET /status` | Status completo |
+| `GET /dashboard-data` | Dados para dashboard |
+| `GET /devices` | Lista dispositivos |
+| `GET /sensors` | Agregação sensores |
+| `GET /bandejas` | Lista bandejas |
+| `POST /cmd` | Enviar comando MQTT |
+| `GET /health` | Health check |
 
-### Comando 2: Fazer commit
-```bash
-git commit -m "Initial commit: Microverdes IoT - MQTT + EMQX Cloud + Render"
-```
-
-### Comando 3: Enviar (push)
-```bash
-git push -u origin main
-```
-
-**Se aparecer algo como:**
-```
-Enumerating objects: 12, done.
-...
-* [new branch] main -> main
-```
-
-✅ **SUCESSO!** 🎉
-
----
-
-## 🌐 PASSO 6: Verificar no GitHub (1 min)
-
-Abra no navegador:
-```
-https://github.com/seu_usuario/microverdes-iot
-```
-
-Deve aparecer:
-- ✅ Pasta `arduino/`
-- ✅ Pasta `nodejs/`
-- ✅ Pasta `docs/`
-- ✅ `README.md` formatado bonitão
-- ✅ `package.json` listado
-
----
-
-## 🚨 ERROS COMUNS
-
-### Erro: "Permission denied (publickey)"
-**Solução:** Instalar GitHub CLI
-```bash
-# Windows: choco install gh
-# Mac: brew install gh
-# Linux: apt install gh
-
-gh auth login
-# Escolher: GitHub.com → HTTPS → Y → Autorizar
-```
-
-### Erro: "fatal: could not read Username"
-**Solução:** Usar token
-```bash
-# Ir em GitHub → Settings → Developer settings → Personal access tokens
-# Gerar novo token (repo)
-# Copiar
-# Quando pedir senha, colar o token
-```
-
-### Erro: ".gitignore não está funcionando"
-**Solução:**
-```bash
-git rm -r --cached .
-git add .
-git commit -m "Update: gitignore"
-git push
-```
-
----
-
-## ✨ PRONTO!
-
-Seu repositório está no GitHub! 🎉
-
-**URL do seu projeto:**
-```
-https://github.com/seu_usuario/microverdes-iot
-```
-
----
-
-## 🎯 PRÓXIMO: Deploy no Render
-
-Quando estiver pronto (próximo passo):
-
-1. Ir em https://render.com
-2. Sign up com GitHub
-3. New Web Service
-4. Conectar repositório `microverdes-iot`
-5. Start Command: `npm start`
-6. Adicionar Environment Variables:
-   ```
-   MQTT_BROKER = mqtt://seu-id.emqx.cloud:1883
-   MQTT_USER = iotbr
-   MQTT_PASSWORD = sua_senha_forte
-   ```
-7. Deploy!
-
----
-
-## 📝 Cheat Sheet Git
+## 🐳 Docker Compose
 
 ```bash
-# Ver status
-git status
-
-# Ver histórico
-git log --oneline
-
-# Ver remote
-git remote -v
-
-# Desfazer último commit
-git reset --soft HEAD~1
-
-# Deletar arquivo do Git (mas não do disco)
-git rm --cached arquivo.txt
-
-# Syncronizar com remote
-git pull
+docker compose up -d          # Subir
+docker compose up -d --build  # Reconstruir
+docker compose logs -f server # Logs
+docker compose down           # Parar
 ```
 
----
+Portas:
+- **8080** — Dashboard React (Nginx)
+- **3000** — API Node.js
 
-## 🎉 É ISSO!
+## 📝 Licença
 
-Você tem:
-- ✅ Repositório no GitHub
-- ✅ Código versionado
-- ✅ Pronto pra Render
-
-Próximo: Deploy no Render (super fácil, 2 min).
-
-**Alguma dúvida?** Posso ajudar! 🚀
+MIT — Instituto Saúde Real Microverdes

@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+greenhouse/node_modules/
+
+# Build output
+greenhouse/dist/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
