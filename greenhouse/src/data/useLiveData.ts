@@ -131,6 +131,14 @@ function getTrend(old: number, cur: number): TemperatureZone['trend'] {
   return cur - old > 0.15 ? 'up' : cur - old < -0.15 ? 'down' : 'stable';
 }
 
+const DEVICE_DEFAULT: LiveData['device'] = {
+  id: '---',
+  ip: '---',
+  rssi: -70,
+  uptime: '---',
+  modo: 'simulacao',
+};
+
 // ─── Mapeia DashboardData → LiveData ─────────────────────────
 function mapearDashboard(data: DashboardData) {
   const sensores = data.sensores || {};
@@ -233,10 +241,7 @@ export function useLiveData(pollMs = 3000): LiveData {
   const [source, setSource] = useState<'servidor' | 'simulacao'>('simulacao');
   const [mqttStatus, setMqttStatus] = useState('desconectado');
   const [eventos, setEventos] = useState<LiveData['eventos']>([]);
-  const [device, setDevice] = useState<LiveData['device']>({
-    id: 'SR-2026-A3F1', ip: '---', rssi: -70,
-    uptime: '00h 00m 00s', modo: 'simulacao',
-  });
+  const [device, setDevice] = useState<LiveData['device']>({ ...DEVICE_DEFAULT });
 
   const [tempZones, setTempZones] = useState<TemperatureZone[]>(initialTemp);
   const [humZones,  setHumZones]  = useState<HumidityZone[]>(initialHum);
@@ -292,11 +297,11 @@ export function useLiveData(pollMs = 3000): LiveData {
       const data: DashboardData = await res.json();
 
       if (!data.ok || !data.online) {
-        // Servidor online mas nenhum dispositivo conectado
-        // Mantém simulação mas marca source = servidor
+        // Servidor acessível, mas sem dispositivo ativo → simulação local
         tickSim();
-        setSource('servidor');
-        setMqttStatus(data.app?.mqtt || 'desconectado');
+        setSource('simulacao');
+        setDevice({ ...DEVICE_DEFAULT });
+        setMqttStatus(data.app?.mqtt === 'conectado' ? 'conectado' : 'desconectado');
         return;
       }
 
@@ -318,6 +323,8 @@ export function useLiveData(pollMs = 3000): LiveData {
       // Servidor inacessível → simulação
       tickSim();
       setSource('simulacao');
+      setDevice({ ...DEVICE_DEFAULT });
+      setMqttStatus('desconectado');
     }
   }, [tickSim]);
 

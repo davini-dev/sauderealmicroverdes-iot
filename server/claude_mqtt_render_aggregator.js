@@ -117,6 +117,33 @@ let estado = {
   totalMensagens: 0
 };
 
+// Sem mensagem MQTT recente → dispositivo considerado offline
+const DEVICE_TIMEOUT_MS = 3 * 60 * 1000;
+
+function infoApp() {
+  return {
+    nome: 'Saúde Real Microverdes IoT',
+    uptime: Math.floor(process.uptime()),
+    mqtt: conexaoAtiva ? 'conectado' : 'desconectado',
+  };
+}
+
+function dispositivoAtivo(dev) {
+  if (!dev?.lastSeen) return false;
+  return Date.now() - new Date(dev.lastSeen).getTime() <= DEVICE_TIMEOUT_MS;
+}
+
+function marcarDispositivosInativos() {
+  Object.values(estado.dispositivos).forEach((dev) => {
+    dev.online = dispositivoAtivo(dev);
+  });
+}
+
+function obterDispositivosAtivos() {
+  marcarDispositivosInativos();
+  return Object.values(estado.dispositivos).filter(dispositivoAtivo);
+}
+
 // Tópicos conhecidos do ESP32 (definidos no microverdes.ino)
 const TOPICOS = {
   TEMP:      'microverdes/sensor/temp',
@@ -718,22 +745,18 @@ function obterBandejas() {
 }
 
 function obterDadosDashboard() {
-  const dispositivos = Object.values(estado.dispositivos);
-  
+  const dispositivos = obterDispositivosAtivos();
+
   if (dispositivos.length === 0) {
     return {
       ok: true,
       ts: new Date().toISOString(),
       online: false,
       message: 'Nenhum dispositivo conectado',
-      app: {
-        nome: 'Saúde Real Microverdes IoT',
-        uptime: Math.floor(process.uptime()),
-        mqtt: conexaoAtiva ? 'conectado' : 'desconectado'
-      }
+      app: infoApp(),
     };
   }
-  
+
   // Prioriza dispositivo real (não ESP32_DEFAULT) como principal
   let principal = dispositivos.find(d => d.id !== 'ESP32_DEFAULT' && d.ip && d.ip !== 'N/A');
   if (!principal) principal = dispositivos[0];
@@ -766,11 +789,15 @@ function obterDadosDashboard() {
       id: d.id,
       online: d.online,
       lastSeen: d.lastSeen
-    }))
+    })),
+    app: infoApp(),
   };
 }
 
 // ==================== MONITORAMENTO ====================
+
+// Marca dispositivos sem heartbeat recente como offline
+setInterval(marcarDispositivosInativos, 60_000);
 
 // Log de resumo a cada 2 minutos
 setInterval(() => {

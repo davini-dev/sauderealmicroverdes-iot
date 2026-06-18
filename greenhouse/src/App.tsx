@@ -36,15 +36,20 @@ function DevicePanel({ device, source, mqttStatus }: {
   source: 'servidor' | 'simulacao';
   mqttStatus: string;
 }) {
+  const isReal = source === 'servidor' && device.modo === 'real';
+  const modoLabel = isReal ? 'REAL' : 'SIMULADO';
+
   return (
     <div className="rounded-xl bg-slate-800 border border-slate-700 p-4 shadow-sm">
       <div className="flex items-center gap-2 mb-3">
-        <div className={`w-2 h-2 rounded-full ${source === 'servidor' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+        <div className={`w-2 h-2 rounded-full ${isReal ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
         <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">
-          Dispositivo ESP32-S3 · LilyGo T-Display
+          {isReal ? 'Dispositivo ESP32-S3 · LilyGo T-Display' : 'Painel em modo demonstração (sem dispositivo ativo)'}
         </span>
-        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-slate-700 text-amber-400 font-mono">
-          {device.modo}
+        <span className={`ml-auto text-[10px] px-2 py-0.5 rounded-full font-mono ${
+          isReal ? 'bg-slate-700 text-emerald-400' : 'bg-slate-700 text-amber-400'
+        }`}>
+          {modoLabel}
         </span>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -68,7 +73,7 @@ function DevicePanel({ device, source, mqttStatus }: {
           </div>
         </div>
         <div>
-          <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">MQTT</p>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">MQTT Broker</p>
           <p className={`text-xs font-mono ${mqttStatus === 'conectado' ? 'text-emerald-400' : 'text-red-400'}`}>
             {mqttStatus === 'conectado' ? '🟢 Conectado' : '🔴 Desconectado'}
           </p>
@@ -113,13 +118,21 @@ export default function App() {
             <div className="hidden sm:flex flex-col items-end gap-0.5 shrink-0">
               <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
                 <div className={`w-1.5 h-1.5 rounded-full ${live.source === 'servidor' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-                {live.source === 'servidor' ? 'Dados Reais' : 'Simulação'} · tick #{live.tickCount}
+                {live.source === 'servidor' ? 'Dados Reais' : 'Dados Simulados'} · tick #{live.tickCount}
               </div>
               <p className="text-[10px] text-slate-400">{live.lastUpdated}</p>
             </div>
           </div>
         </div>
-        <div className="lg:hidden border-t border-slate-100 overflow-x-auto">
+        <div className="lg:hidden border-t border-slate-100">
+          <div className="flex items-center justify-between px-4 py-1 text-[10px] text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${live.source === 'servidor' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              {live.source === 'servidor' ? 'Dados Reais' : 'Dados Simulados'}
+            </span>
+            <span>{live.lastUpdated}</span>
+          </div>
+          <div className="overflow-x-auto">
           <div className="flex gap-1 px-4 py-1.5">
             {tabs.map(tab => (
               <button key={tab.key} onClick={() => setActiveTab(tab.key)}
@@ -129,6 +142,7 @@ export default function App() {
                 {tab.emoji} {tab.label}
               </button>
             ))}
+          </div>
           </div>
         </div>
       </header>
@@ -210,7 +224,7 @@ export default function App() {
             {' '}· {temperatureZones.length} zonas · {irrigationLines.length} linhas de irrigação
           </p>
           <p className="text-xs text-slate-400">
-            {live.source === 'servidor' ? 'Dados reais (ESP32-S3)' : 'Simulação local'} · tick #{live.tickCount} · {live.lastUpdated}
+            {live.source === 'servidor' ? 'Dados reais (ESP32-S3)' : 'Dados simulados'} · tick #{live.tickCount} · {live.lastUpdated}
           </p>
         </div>
       </footer>
