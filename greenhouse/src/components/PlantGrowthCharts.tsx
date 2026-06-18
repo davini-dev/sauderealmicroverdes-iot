@@ -110,7 +110,8 @@ export default function PlantGrowthCharts({ data }: Props) {
         <p className="text-xs text-slate-400 mb-4">
           Medições de crescimento semanais ao longo de 8 semanas
         </p>
-        <ResponsiveContainer width="100%" height={300}>
+        <div className="w-full h-[300px] min-h-[300px]">
+        <ResponsiveContainer width="100%" height="100%">
           <LineChart data={filteredData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
             <XAxis
@@ -156,6 +157,7 @@ export default function PlantGrowthCharts({ data }: Props) {
             )}
           </LineChart>
         </ResponsiveContainer>
+        </div>
       </div>
 
       {/* Growth summary cards */}

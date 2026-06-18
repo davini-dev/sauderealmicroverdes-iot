@@ -47,7 +47,7 @@ function DevicePanel({ device, source, mqttStatus }: {
           {device.modo}
         </span>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div>
           <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">Device ID</p>
           <p className="text-xs font-mono font-bold text-emerald-400">{device.id}</p>
@@ -92,15 +92,15 @@ export default function App() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-emerald-50/30 to-teal-50/20">
       <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-lg border-b border-slate-200/60">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="flex items-center justify-between h-20">
-            <div className="flex items-center gap-3">
-              <img src={logoSaudeReal} alt="Saúde Real" className="h-12 w-12 sm:h-14 sm:w-14 object-contain rounded-lg" />
-              <div>
-                <h1 className="text-sm sm:text-base font-bold text-slate-800 leading-tight">Instituto Saúde Real Microverdes</h1>
-                <p className="text-[10px] sm:text-xs text-slate-500 leading-tight font-medium">Painel de Monitoramento de Estufa</p>
+          <div className="flex items-center justify-between gap-3 h-20 min-w-0">
+            <div className="flex items-center gap-3 min-w-0 shrink">
+              <img src={logoSaudeReal} alt="Saúde Real" className="h-12 w-12 sm:h-14 sm:w-14 shrink-0 object-contain rounded-lg" />
+              <div className="min-w-0">
+                <h1 className="text-sm sm:text-base font-bold text-slate-800 leading-tight truncate">Instituto Saúde Real Microverdes</h1>
+                <p className="text-[10px] sm:text-xs text-slate-500 leading-tight font-medium truncate">Painel de Monitoramento de Estufa</p>
               </div>
             </div>
-            <nav className="hidden lg:flex items-center gap-1">
+            <nav className="hidden lg:flex items-center gap-1 shrink-0">
               {tabs.map(tab => (
                 <button key={tab.key} onClick={() => setActiveTab(tab.key)}
                   className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
@@ -110,7 +110,7 @@ export default function App() {
                 </button>
               ))}
             </nav>
-            <div className="hidden sm:flex flex-col items-end gap-0.5">
+            <div className="hidden sm:flex flex-col items-end gap-0.5 shrink-0">
               <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
                 <div className={`w-1.5 h-1.5 rounded-full ${live.source === 'servidor' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
                 {live.source === 'servidor' ? 'Dados Reais' : 'Simulação'} · tick #{live.tickCount}

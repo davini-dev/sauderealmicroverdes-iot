@@ -107,7 +107,8 @@ export default function TemperatureZones({ zones }: Props) {
           {expandedZone === zone.id && (
             <div className="mt-4 pt-4 border-t border-slate-100">
               <p className="text-xs font-medium text-slate-500 mb-2">Tendência das últimas 24 horas</p>
-              <ResponsiveContainer width="100%" height={140}>
+              <div className="w-full h-[140px] min-h-[140px]">
+              <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={zone.history}>
                   <XAxis dataKey="time" tick={{ fontSize: 10 }} interval={2} axisLine={false} tickLine={false} />
                   <YAxis domain={[zone.min - 2, zone.max + 2]} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} width={30} />
@@ -119,6 +120,7 @@ export default function TemperatureZones({ zones }: Props) {
                   <Line type="monotone" dataKey="temp" stroke="#10b981" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
+              </div>
               <p className="text-[10px] text-slate-400 text-center mt-1">Linha tracejada amarela = temperatura alvo ({zone.target}°C)</p>
             </div>
           )}

@@ -1,12 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // Em dev: /api/* → Node.js server (porta 3000)
 // Em prod (Docker): /api/* → nginx → server container
 const SERVER_URL = process.env.VITE_SERVER_URL || 'http://localhost:3000';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     proxy: {
       // Todas as chamadas de API passam pelo proxy do Vite
