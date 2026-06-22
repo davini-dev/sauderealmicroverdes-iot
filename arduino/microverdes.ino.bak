@@ -114,7 +114,6 @@ int  modo = 0;
 #define T_NEBLINA "microverdes/status/neblina"
 #define T_IRR     "microverdes/cmd/irrigacao"
 #define T_DEVICE  "microverdes/device/info"
-#define T_DEVICE_STATUS "microverdes/device/status"  // LWT: publicado pelo broker ao desconectar
 #define T_BANDEJA "microverdes/bandeja/"
 
 // ── Intervalos ────────────────────────────────────────────────
@@ -602,18 +601,11 @@ bool tentarConectarMqttOnce() {
   if (strlen(cfgDevName) == 0) gerarNome(cfgDevName, sizeof(cfgDevName));
   cfgDevName[sizeof(cfgDevName) - 1] = '\0';
 
-  // LWT payload: publicado automaticamente pelo broker se o ESP32 desconectar
-  char willPayload[80];
-  snprintf(willPayload, sizeof(willPayload), "{\"id\":\"%s\",\"status\":\"offline\"}", cfgDevName);
-
   Serial.printf("[MQTT] client_id=%s\n", cfgDevName);
-  Serial.printf("[MQTT] LWT topic=%s payload=%s\n", T_DEVICE_STATUS, willPayload);
 
   if (MQTT_USER && MQTT_USER[0] != '\0')
-    return mqttClient.connect(cfgDevName, MQTT_USER, MQTT_PASS,
-                              T_DEVICE_STATUS, 1, true, willPayload);
-  return mqttClient.connect(cfgDevName,
-                            T_DEVICE_STATUS, 1, true, willPayload);
+    return mqttClient.connect(cfgDevName, MQTT_USER, MQTT_PASS);
+  return mqttClient.connect(cfgDevName);
 }
 
 const char* nomeStatusWifi() {

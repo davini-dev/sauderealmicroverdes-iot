@@ -91,8 +91,8 @@ const server = http.createServer((req, res) => {
     res.writeHead(200);
     res.end(JSON.stringify(obterDadosDashboard(), null, 2));
   } else if (req.url === '/health') {
-    res.writeHead(200, {'Content-Type': 'application/json'});
-    res.end(JSON.stringify({ ok: true, status: 'OK' }));
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.end('OK');
   } else {
     res.writeHead(404);
     res.end(JSON.stringify({ error: 'Not Found' }));
@@ -118,8 +118,7 @@ let estado = {
 };
 
 // Sem mensagem MQTT recente → dispositivo considerado offline
-// ESP32 publica device/info a cada 30s → 45s = ~1.5 ciclos perdidos
-const DEVICE_TIMEOUT_MS = 45 * 1000;
+const DEVICE_TIMEOUT_MS = 3 * 60 * 1000;
 
 function infoApp() {
   return {
@@ -140,14 +139,6 @@ function marcarDispositivosInativos() {
   });
 }
 
-// ── Marca dispositivo offline via LWT (Last Will and Testament) ──
-function marcarOfflinePorLWT(deviceId) {
-  if (estado.dispositivos[deviceId]) {
-    estado.dispositivos[deviceId].online = false;
-    console.log(`🔴 [LWT] Dispositivo ${deviceId} marcado como OFFLINE (disconnect detectado pelo broker)`);
-  }
-}
-
 function obterDispositivosAtivos() {
   marcarDispositivosInativos();
   return Object.values(estado.dispositivos).filter(dispositivoAtivo);
@@ -162,7 +153,6 @@ const TOPICOS = {
   NEBLINA:   'microverdes/status/neblina',
   IRRIGACAO: 'microverdes/cmd/irrigacao',
   DEVICE:    'microverdes/device/info',
-  DEVICE_STATUS: 'microverdes/device/status',  // ← LWT topic (will do ESP32)
   BANDEJA:   'microverdes/bandeja/'
 };
 
@@ -235,9 +225,6 @@ client.on('connect', () => {
     TOPICOS.NEBLINA,        // microverdes/status/neblina
     TOPICOS.IRRIGACAO,      // microverdes/cmd/irrigacao
     
-    // ★ LWT: dispositivo desconectou/desligado (broker publica automaticamente)
-    TOPICOS.DEVICE_STATUS,  // microverdes/device/status
-
     // Info do dispositivo (JSON)
     TOPICOS.DEVICE,         // microverdes/device/info
     
@@ -339,18 +326,6 @@ client.on('message', (topic, message) => {
     const payload = message.toString();
     const timestamp = new Date();
     
-    // ──── LWT: dispositivo desconectou/desligado ────
-    // Broker publicou automaticamente quando a conexão TCP do ESP32 caiu
-    if (topic === TOPICOS.DEVICE_STATUS) {
-      let data = {};
-      try { data = JSON.parse(payload); } catch {}
-      const deviceId = data.id || 'ESP32_DEFAULT';
-      marcarOfflinePorLWT(deviceId);
-      estado.ultimaAtualizacao = timestamp.toISOString();
-      estado.totalMensagens++;
-      return;
-    }
-
     // ── DEVICE INFO (JSON) ──
     if (topic === TOPICOS.DEVICE) {
       const data = JSON.parse(payload);
@@ -822,7 +797,7 @@ function obterDadosDashboard() {
 // ==================== MONITORAMENTO ====================
 
 // Marca dispositivos sem heartbeat recente como offline
-setInterval(marcarDispositivosInativos, 15_000);// Intervalo reduzido de 60s → 15s
+setInterval(marcarDispositivosInativos, 60_000);
 
 // Log de resumo a cada 2 minutos
 setInterval(() => {

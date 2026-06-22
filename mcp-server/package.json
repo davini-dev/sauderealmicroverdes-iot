@@ -1,0 +1,19 @@
+{
+  "name": "microverdes-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server — Saúde Real Microverdes IoT. Expõe todos os endpoints da API como ferramentas para agentes de IA.",
+  "type": "module",
+  "bin": {
+    "microverdes-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

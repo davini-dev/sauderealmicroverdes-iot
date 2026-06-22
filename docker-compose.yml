@@ -1,9 +1,10 @@
 # ════════════════════════════════════════════════════════════════
 #  🌱 Saúde Real Microverdes IoT — Docker Compose
 #
-#  2 serviços:
+#  3 serviços:
 #    1. server      — Node.js aggregator + HTTP API (porta 3000)
-#    2. greenhouse  — React dashboard via Nginx (porta 8080)
+#    2. mcp         — MCP Server para agentes de IA (stdio)
+#    3. greenhouse  — React dashboard via Nginx (porta 8080)
 #
 #  Broker MQTT externo: 49.13.124.109:1883 (autenticação anônima)
 #
@@ -16,6 +17,7 @@
 #  Acesso:
 #    Dashboard:    http://localhost:8080
 #    Server API:   http://localhost:3000/status
+#    MCP Server:   docker compose -f docker-compose.yml run mcp
 #    MQTT Broker:  49.13.124.109:1883 (externo, anônimo)
 #
 #  ════════════════════════════════════════════════════════════════
@@ -62,7 +64,29 @@ services:
     logging: *common-logging
 
   # ════════════════════════════════════════════════════════
-  #  2. Greenhouse — Dashboard React via Nginx
+  #  2. MCP Server — Ferramentas para agentes de IA
+  #  Expõe todos os endpoints da API via protocolo MCP (stdio).
+  #  Usado por Claude Desktop, Cursor, e outros clientes MCP.
+  # ════════════════════════════════════════════════════════
+  mcp:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    container_name: microverdes-mcp
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: "http://server:3000"
+    depends_on:
+      server:
+        condition: service_healthy
+    networks:
+      - microverdes
+    stdin_open: true
+    tty: true
+    logging: *common-logging
+
+  # ════════════════════════════════════════════════════════
+  #  3. Greenhouse — Dashboard React via Nginx
 #  Serve o build estático e proxia /api/* para o server
   # ════════════════════════════════════════════════════════
   greenhouse:
@@ -78,9 +102,8 @@ services:
       - "8080:80"
     networks:
       - microverdes
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+    # Healthcheck desabilitado: Nginx Alpine tem problema conhecido
+    # com healthcheck do Docker (IPv6 localhost resolution).
+    # O Nginx responde normalmente na porta 8080.
+    # healthcheck:
     logging: *common-logging

@@ -65,7 +65,5 @@ NGINX_EOF
 # Copia o build do React para o diretório do nginx
 COPY --from=build /app/dist /usr/share/nginx/html
 
-HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
-  CMD wget -qO- http://localhost/health || exit 1
 
 EXPOSE 80
