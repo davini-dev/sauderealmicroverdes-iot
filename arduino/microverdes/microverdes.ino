@@ -4,12 +4,13 @@
 //
 //  FLUXO DE BOOT:
 //    1. Le NVS -> se configurado -> tela de monitoramento
-//    2. Se nao configurado -> tela de provisionamento
+//    2. Se nao configurado -> scan WiFi -> seleciona rede
+//       -> digita senha -> conecta WiFi -> tela broker
 //       -> usuario preenche URL broker (ip:port) + nome device
-//       -> salva na NVS -> conecta -> monitoramento
+//       -> salva na NVS -> conecta MQTT -> monitoramento
 //
-//  BTN0 (GPIO0)  = navega teclas / segura 3s para resetar
-//  BTN1 (GPIO14) = pressiona tecla / confirma campo
+//  BTN0 (GPIO0)  = navega / segura 3s para resetar
+//  BTN1 (GPIO14) = confirma / seleciona
 //
 //  BIBLIOTECAS:
 //    TFT_eSPI     (Bodmer)
@@ -36,13 +37,9 @@ struct Pub        { char t[48]; char v[16]; char h[10]; };
 
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 
-// ── WiFi ──────────────────────────────────────────────────────
-const char* WIFI_SSID = "Internet";
-const char* WIFI_PASS = "12345678";
-
-// MQTT (nullptr = conexao anonima; broker 49.13.124.109 aceita anonimo)
-const char* MQTT_USER = nullptr;
-const char* MQTT_PASS = nullptr;
+// ── MQTT Credentials ──────────────────────────────────────────
+const char* MQTT_USER = "vDiaTbIzinPbEMtSal4P";
+const char* MQTT_PASS = "";
 
 // ── Botoes fisicos ────────────────────────────────────────────
 #define BTN0  0
@@ -52,6 +49,8 @@ const char* MQTT_PASS = nullptr;
 #define NVS_NS      "srconfig"
 #define NVS_BROKER  "broker"
 #define NVS_DEVNAME "devname"
+#define NVS_WIFISSID "wifissid"
+#define NVS_WIFIPASS "wifipass"
 #define NVS_DONE    "done"
 
 // ── Display ───────────────────────────────────────────────────
@@ -76,6 +75,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define C_INACTIVE 0x1082
 #define C_KEY_BG   0x2104
 #define C_KEY_ACT  0x03A0
+#define C_SEL_BG   0x0200
 
 // ── Estado global ─────────────────────────────────────────────
 Preferences      prefs;
@@ -86,6 +86,8 @@ PubSubClient     mqttClient(wifiClientPlain);
 
 char cfgBroker[64]  = "";
 char cfgDevName[20] = "";
+char cfgWifiSsid[32] = "";
+char cfgWifiPass[64] = "";
 char mqttHost[48]   = "";
 int  mqttPort       = 1883;
 bool mqttTls        = false;
@@ -106,16 +108,33 @@ int  modo = 0;
 #define MQTT_SOCKET_TIMEOUT 20
 #define TCP_SOCKET_TIMEOUT  20
 
+// ── Provisioning states ───────────────────────────────────────
+#define PROV_WIFI_SELECT 0
+#define PROV_WIFI_PASS   1
+#define PROV_BROKER      2
+int provState = PROV_WIFI_SELECT;
+
+// ── WiFi scan ─────────────────────────────────────────────────
+#define MAX_NETWORKS 30
+String wifiList[MAX_NETWORKS];
+int32_t wifiRssi[MAX_NETWORKS];
+uint8_t wifiEnc[MAX_NETWORKS];
+int wifiCount = 0;
+int wifiSelectedIndex = 0;
+int wifiScrollOffset = 0;
+int wifiScanAttempts = 0;
+#define MAX_SCAN_ATTEMPTS 3
+
 // ── Topicos MQTT ──────────────────────────────────────────────
-#define T_TEMP    "microverdes/sensor/temp"
-#define T_AR      "microverdes/sensor/ar"
-#define T_LUZ     "microverdes/sensor/luz"
-#define T_UMIDADE "microverdes/sensor/umidade"
-#define T_NEBLINA "microverdes/status/neblina"
-#define T_IRR     "microverdes/cmd/irrigacao"
-#define T_DEVICE  "microverdes/device/info"
-#define T_DEVICE_STATUS "microverdes/device/status"  // LWT: publicado pelo broker ao desconectar
-#define T_BANDEJA "microverdes/bandeja/"
+#define T_TEMP      "microverdes/sensor/temp"
+#define T_AR        "microverdes/sensor/ar"
+#define T_LUZ       "microverdes/sensor/luz"
+#define T_UMIDADE   "microverdes/sensor/umidade"
+#define T_NEBLINA   "microverdes/status/neblina"
+#define T_IRR       "microverdes/cmd/irrigacao"
+#define T_DEVICE    "microverdes/device/info"
+#define T_BANDEJA   "microverdes/bandeja/"
+#define T_TELEMETRY "v1/devices/me/telemetry"
 
 // ── Intervalos ────────────────────────────────────────────────
 const unsigned long IV_SENSORES = 10000;
@@ -143,10 +162,16 @@ int pubCount = 0;
 bool irrigacaoOn = false;
 bool neblinaOn   = false;
 
-// ── Numpad ────────────────────────────────────────────────────
+// ── Numpad compartilhado ──────────────────────────────────────
 const char NP_DIGITS[10] = {'1','2','3','4','5','6','7','8','9','0'};
 const char NP_ACTIONS[5] = {'D','C','.', ':', 'O'};
 const char* NP_LABELS[5] = {"DEL","CLR",".",":","OK"};
+
+// Para password WiFi: usamos um conjunto diferente de acoes
+const char NP_ACTIONS_PASS[5] = {'D','C','@','!','O'};
+const char* NP_LABELS_PASS[5] = {"DEL","CLR","@","!","OK"};
+const char NP_CHARS_PASS[14]  = {'@','!','#','$','%','&','*','-','_','+','=','?','/','~'};
+int npCharPassIdx = 0; // indice no NP_CHARS_PASS para tecla extra
 
 int npLinha    = 0;
 int npCol      = 0;
@@ -154,6 +179,7 @@ int campoAtivo = 0;
 
 char editBroker[64] = "";
 char editDev[20]    = "";
+char editWifiPass[64] = "";
 
 #define PORTA_PAD ":1883"
 
@@ -257,11 +283,37 @@ void publicarDevice() {
   pub(T_DEVICE, payload);
 }
 
+void publicarTelemetry() {
+  // Publica todos os sensores no topico ThingsBoard telemetry
+  // Segue a logica: mosquitto_pub -d -q 1 -h broker_ip -p 1883
+  //   -t v1/devices/me/telemetry -u "vDiaTbIzinPbEMtSal4P"
+  //   -m "{temperature:25}"
+  // Usa o mesmo token (MQTT_USER) ja configurado na conexao MQTT
+  float temp = simTemp.valor;
+  float ar   = simAr.valor;
+  float lux  = simLuz.valor;
+  float solo = simSolo.valor;
+
+  StaticJsonDocument<256> doc;
+  doc["temperature"] = round(temp * 10.0) / 10.0;
+  doc["humidity"]    = round(solo * 10.0) / 10.0;
+  doc["air"]         = round(ar   * 10.0) / 10.0;
+  doc["light"]       = (int)round(lux);
+  doc["irrigation"]  = irrigacaoOn ? "ON" : "OFF";
+  doc["mist"]        = neblinaOn   ? "ON" : "OFF";
+
+  char payload[256];
+  serializeJson(doc, payload);
+  // ThingsBoard telemetry: sem retain, apenas publicar
+  mqttClient.publish(T_TELEMETRY, payload);
+  regPub(T_TELEMETRY, payload);
+}
+
 // ═══════════════════════════════════════════════════════════════
-//  NUMPAD
+//  NUMPAD (compartilhado: broker e wifi password)
 // ═══════════════════════════════════════════════════════════════
 
-void desenharNpTecla(int linha, int col, bool ativa) {
+void desenharNpTecla(int linha, int col, bool ativa, bool isPasswordMode) {
   int KY0 = 108, KY1 = 130, KH = 20;
   uint16_t bg = ativa ? C_KEY_ACT : C_KEY_BG;
 
@@ -285,13 +337,26 @@ void desenharNpTecla(int linha, int col, bool ativa) {
     tft.setTextColor(ativa ? C_WHITE : C_LGRAY, bg);
     tft.setTextDatum(MC_DATUM);
     tft.setTextSize(1);
-    tft.drawString(NP_LABELS[col], kx+kw/2, KY1+KH/2);
+
+    if (isPasswordMode && col < 5) {
+      // Mostra caractere especial rotativo na tecla @ apenas
+      if (col == 2) {
+        // Cicla pelos caracteres especiais a cada pressionada
+        char lbl2[4];
+        snprintf(lbl2, sizeof(lbl2), "%c~>", NP_CHARS_PASS[npCharPassIdx % 14]);
+        tft.drawString(lbl2, kx+kw/2, KY1+KH/2);
+      } else {
+        tft.drawString(NP_LABELS_PASS[col], kx+kw/2, KY1+KH/2);
+      }
+    } else {
+      tft.drawString(NP_LABELS[col], kx+kw/2, KY1+KH/2);
+    }
   }
 }
 
-void desenharNumpad() {
-  for (int c = 0; c < 10; c++) desenharNpTecla(0, c, (npLinha==0 && npCol==c));
-  for (int c = 0; c < 5;  c++) desenharNpTecla(1, c, (npLinha==1 && npCol==c));
+void desenharNumpad(bool isPasswordMode = false) {
+  for (int c = 0; c < 10; c++) desenharNpTecla(0, c, (npLinha==0 && npCol==c), isPasswordMode);
+  for (int c = 0; c < 5;  c++) desenharNpTecla(1, c, (npLinha==1 && npCol==c), isPasswordMode);
 }
 
 void moverCursor() {
@@ -304,7 +369,7 @@ void moverCursor() {
   }
 }
 
-bool pressionarTecla() {
+bool pressionarTeclaBroker() {
   char* campo  = (campoAtivo == 0) ? editBroker : editDev;
   int   maxLen = (campoAtivo == 0) ? 63 : 19;
   int   len    = strlen(campo);
@@ -316,10 +381,7 @@ bool pressionarTecla() {
 
   char a = NP_ACTIONS[npCol];
   if (a == 'D') { if (len > 0) campo[len-1] = '\0'; return false; }
-  if (a == 'C') {
-    campo[0] = '\0';
-    return false;
-  }
+  if (a == 'C') { campo[0] = '\0'; return false; }
   if (a == '.' || a == ':') {
     if (len < maxLen) { campo[len] = a; campo[len+1] = '\0'; }
     return false;
@@ -336,11 +398,182 @@ bool pressionarTecla() {
   return false;
 }
 
+bool pressionarTeclaWifiPass() {
+  int   maxLen = 63;
+  int   len    = strlen(editWifiPass);
+
+  if (npLinha == 0) {
+    // Digitos
+    if (len < maxLen) { editWifiPass[len] = NP_DIGITS[npCol]; editWifiPass[len+1] = '\0'; }
+    return false;
+  }
+
+  // Linha 1: acoes especificas para password
+  char a = NP_ACTIONS_PASS[npCol];
+  if (a == 'D') { if (len > 0) editWifiPass[len-1] = '\0'; return false; }
+  if (a == 'C') { editWifiPass[0] = '\0'; return false; }
+  if (a == '@') {
+    // Caractere especial: cicla pelos caracteres especiais
+    if (len < maxLen) {
+      editWifiPass[len] = NP_CHARS_PASS[npCharPassIdx % 14];
+      editWifiPass[len+1] = '\0';
+      npCharPassIdx++;
+    }
+    return false;
+  }
+  if (a == '!') {
+    // Outro caractere especial fixo (ponto de exclamacao)
+    if (len < maxLen) { editWifiPass[len] = '!'; editWifiPass[len+1] = '\0'; }
+    return false;
+  }
+  if (a == 'O') {
+    // OK - confirmar senha
+    return true;
+  }
+  return false;
+}
+
 // ═══════════════════════════════════════════════════════════════
-//  TELAS
+//  TELAS DE PROVISIONAMENTO
 // ═══════════════════════════════════════════════════════════════
 
-void desenharProvisionamento() {
+void desenharTelaScanWiFi() {
+  tft.fillScreen(C_BG);
+
+  // Header
+  tft.fillRect(0, 0, TFT_W, 22, C_HEADER);
+  tft.setTextColor(C_GREEN, C_HEADER);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextSize(1);
+  tft.drawString("sauderealmicroverdes.club", 6, 11);
+  tft.setTextColor(C_AMBER, C_HEADER);
+  tft.setTextDatum(MR_DATUM);
+  tft.drawString("REDES WiFi", TFT_W-6, 11);
+
+  if (wifiCount == 0) {
+    tft.setTextColor(C_GRAY, C_BG);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString("Escaneando redes...", TFT_W/2, TFT_H/2 - 10);
+    tft.drawString("Aperte BTN1 para escanear", TFT_W/2, TFT_H/2 + 10);
+    return;
+  }
+
+  // Lista de redes
+  int y = 28;
+  int lh = 17;
+  int maxVisible = 7;
+  
+  // Ajusta scroll
+  if (wifiSelectedIndex < wifiScrollOffset) wifiScrollOffset = wifiSelectedIndex;
+  if (wifiSelectedIndex >= wifiScrollOffset + maxVisible) wifiScrollOffset = wifiSelectedIndex - maxVisible + 1;
+  if (wifiScrollOffset < 0) wifiScrollOffset = 0;
+  if (wifiScrollOffset > wifiCount - maxVisible) wifiScrollOffset = max(0, wifiCount - maxVisible);
+
+  for (int i = wifiScrollOffset; i < wifiCount && i < wifiScrollOffset + maxVisible; i++) {
+    bool selected = (i == wifiSelectedIndex);
+    uint16_t bg = selected ? C_SEL_BG : C_BG;
+    tft.fillRect(0, y, TFT_W, lh, bg);
+
+    // Indicador de selecao
+    if (selected) {
+      tft.setTextColor(C_GREEN, bg);
+      tft.setTextDatum(ML_DATUM);
+      tft.drawString(">", 2, y + lh/2);
+    }
+
+    // Icone de criptografia
+    bool open = (wifiEnc[i] == 0);
+    if (open) {
+      tft.setTextColor(C_GREEN, bg);
+      tft.drawString("[O]", 14, y + lh/2);
+    } else {
+      tft.setTextColor(C_AMBER, bg);
+      tft.drawString("[#]", 14, y + lh/2);
+    }
+
+    // Nome da rede (truncado)
+    tft.setTextColor(selected ? C_WHITE : C_LGRAY, bg);
+    tft.setTextDatum(ML_DATUM);
+    String ssid = wifiList[i];
+    if (ssid.length() > 22) ssid = ssid.substring(0, 22) + "..";
+    tft.drawString(ssid, 36, y + lh/2);
+
+    // RSSI
+    tft.setTextColor(C_GRAY, bg);
+    tft.setTextDatum(MR_DATUM);
+    char rssiStr[8];
+    snprintf(rssiStr, sizeof(rssiStr), "%d dBm", wifiRssi[i]);
+    tft.drawString(rssiStr, TFT_W - 4, y + lh/2);
+
+    y += lh;
+  }
+
+  // Rodape
+  tft.setTextColor(C_GRAY, C_BG);
+  tft.setTextDatum(ML_DATUM);
+  char footer[40];
+  snprintf(footer, sizeof(footer), "%d redes | BTN0=nav BTN1=sel", wifiCount);
+  tft.drawString(footer, 4, TFT_H - 12);
+}
+
+void desenharTelaWifiPass() {
+  tft.fillScreen(C_BG);
+
+  // Header
+  tft.fillRect(0, 0, TFT_W, 22, C_HEADER);
+  tft.setTextColor(C_GREEN, C_HEADER);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextSize(1);
+  tft.drawString("sauderealmicroverdes.club", 6, 11);
+  tft.setTextColor(C_AMBER, C_HEADER);
+  tft.setTextDatum(MR_DATUM);
+  tft.drawString("SENHA WiFi", TFT_W-6, 11);
+
+  // Nome da rede selecionada
+  int y = 27;
+  tft.setTextColor(C_DKGREEN, C_BG);
+  tft.setTextDatum(ML_DATUM);
+  tft.drawString("Rede:", 6, y);
+  tft.setTextColor(C_WHITE, C_BG);
+  String ssid = wifiSelectedIndex < wifiCount ? wifiList[wifiSelectedIndex] : "?";
+  if (ssid.length() > 28) ssid = ssid.substring(0, 28) + "..";
+  tft.drawString(ssid, 48, y);
+  y += 13;
+
+  // Campo de senha
+  tft.setTextColor(C_GREEN, C_BG);
+  tft.drawString("Senha:", 6, y);
+  y += 11;
+
+  uint16_t bgPass = C_ACTIVE;
+  tft.fillRoundRect(4, y, 230, 18, 3, bgPass);
+  tft.drawRoundRect(4, y, 230, 18, 3, C_GREEN);
+
+  tft.setTextColor(C_WHITE, bgPass);
+  tft.setTextDatum(ML_DATUM);
+
+  // Mostra asteriscos para a senha
+  char masked[66];
+  int passLen = strlen(editWifiPass);
+  for (int i = 0; i < passLen && i < 30; i++) masked[i] = '*';
+  masked[passLen] = '\0';
+  char display[34];
+  snprintf(display, sizeof(display), "%s%s", masked, passLen < 30 ? "_" : "");
+  tft.drawString(display, 8, y + 9);
+
+  y += 24;
+
+  // Instrucoes
+  tft.setTextColor(C_GRAY, C_BG);
+  tft.setTextDatum(ML_DATUM);
+  tft.drawString("BTN0=nav  BTN1=tecla", 6, y);
+  y += 12;
+  tft.drawString("Tecla @ cicla caracteres especiais", 6, y);
+
+  desenharNumpad(true);
+}
+
+void desenharTelaProvisionamento() {
   tft.fillScreen(C_BG);
 
   tft.fillRect(0, 0, TFT_W, 22, C_HEADER);
@@ -350,9 +583,25 @@ void desenharProvisionamento() {
   tft.drawString("sauderealmicroverdes.club", 6, 11);
   tft.setTextColor(C_AMBER, C_HEADER);
   tft.setTextDatum(MR_DATUM);
-  tft.drawString("CONFIGURACAO", TFT_W-6, 11);
+  tft.drawString("CONFIG BROKER", TFT_W-6, 11);
 
   int y = 27;
+
+  // Info WiFi
+  tft.setTextColor(C_DKGREEN, C_BG);
+  tft.setTextDatum(ML_DATUM);
+  tft.drawString("WiFi:", 6, y);
+  tft.setTextColor(C_WHITE, C_BG);
+  String ssid = wifiSelectedIndex < wifiCount ? wifiList[wifiSelectedIndex] : cfgWifiSsid;
+  tft.drawString(ssid.substring(0, 24), 48, y);
+  y += 13;
+
+  // Auth info
+  tft.setTextColor(C_DKGREEN, C_BG);
+  tft.drawString("Token:", 6, y);
+  tft.setTextColor(C_GREEN, C_BG);
+  tft.drawString("vDiaTbIzinPbEMtSal4P", 62, y);
+  y += 14;
 
   // campo broker
   tft.setTextDatum(ML_DATUM);
@@ -389,7 +638,7 @@ void desenharProvisionamento() {
   tft.setTextDatum(MR_DATUM);
   tft.drawString("BTN0=nav  BTN1=ok", TFT_W-4, y+9);
 
-  desenharNumpad();
+  desenharNumpad(false);
 }
 
 void desenharMonitor() {
@@ -407,12 +656,16 @@ void desenharMonitor() {
   tft.setTextDatum(ML_DATUM);
   tft.drawString(mqttConectado ? "MQTT ON" : "MQTT OFF", TFT_W-54, 12);
 
-  // linhas de info — sem lambda, funcao inline simples
+  // linhas de info
   int y = 32;
   int lh = 17;
 
   tft.setTextColor(C_GRAY,  C_BG); tft.setTextDatum(ML_DATUM); tft.drawString("IP local :", 6, y);
   tft.setTextColor(C_WHITE, C_BG); tft.drawString(wifiConectado ? WiFi.localIP().toString().c_str() : "...", 84, y);
+  y += lh;
+
+  tft.setTextColor(C_GRAY,  C_BG); tft.drawString("WiFi     :", 6, y);
+  tft.setTextColor(C_LGRAY, C_BG); tft.drawString(cfgWifiSsid, 84, y);
   y += lh;
 
   tft.setTextColor(C_GRAY,  C_BG); tft.drawString("Broker   :", 6, y);
@@ -481,8 +734,10 @@ bool carregarConfig() {
   prefs.begin(NVS_NS, true);
   bool ok = prefs.getBool(NVS_DONE, false);
   if (ok) {
-    prefs.getString(NVS_BROKER,  cfgBroker,  sizeof(cfgBroker));
-    prefs.getString(NVS_DEVNAME, cfgDevName, sizeof(cfgDevName));
+    prefs.getString(NVS_BROKER,   cfgBroker,  sizeof(cfgBroker));
+    prefs.getString(NVS_DEVNAME,  cfgDevName, sizeof(cfgDevName));
+    prefs.getString(NVS_WIFISSID, cfgWifiSsid, sizeof(cfgWifiSsid));
+    prefs.getString(NVS_WIFIPASS, cfgWifiPass, sizeof(cfgWifiPass));
     normalizarBroker(cfgBroker);
   }
   prefs.end();
@@ -491,8 +746,10 @@ bool carregarConfig() {
 
 void salvarConfig() {
   prefs.begin(NVS_NS, false);
-  prefs.putString(NVS_BROKER,  cfgBroker);
-  prefs.putString(NVS_DEVNAME, cfgDevName);
+  prefs.putString(NVS_BROKER,   cfgBroker);
+  prefs.putString(NVS_DEVNAME,  cfgDevName);
+  prefs.putString(NVS_WIFISSID, cfgWifiSsid);
+  prefs.putString(NVS_WIFIPASS, cfgWifiPass);
   prefs.putBool(NVS_DONE, true);
   prefs.end();
 }
@@ -602,18 +859,14 @@ bool tentarConectarMqttOnce() {
   if (strlen(cfgDevName) == 0) gerarNome(cfgDevName, sizeof(cfgDevName));
   cfgDevName[sizeof(cfgDevName) - 1] = '\0';
 
-  // LWT payload: publicado automaticamente pelo broker se o ESP32 desconectar
-  char willPayload[80];
-  snprintf(willPayload, sizeof(willPayload), "{\"id\":\"%s\",\"status\":\"offline\"}", cfgDevName);
-
-  Serial.printf("[MQTT] client_id=%s\n", cfgDevName);
-  Serial.printf("[MQTT] LWT topic=%s payload=%s\n", T_DEVICE_STATUS, willPayload);
+  Serial.printf("[MQTT] client_id=%s user=%s pass=%s\n",
+                cfgDevName,
+                MQTT_USER ? MQTT_USER : "null",
+                MQTT_PASS ? "****" : "null");
 
   if (MQTT_USER && MQTT_USER[0] != '\0')
-    return mqttClient.connect(cfgDevName, MQTT_USER, MQTT_PASS,
-                              T_DEVICE_STATUS, 1, true, willPayload);
-  return mqttClient.connect(cfgDevName,
-                            T_DEVICE_STATUS, 1, true, willPayload);
+    return mqttClient.connect(cfgDevName, MQTT_USER, MQTT_PASS);
+  return mqttClient.connect(cfgDevName);
 }
 
 const char* nomeStatusWifi() {
@@ -633,15 +886,15 @@ bool conectarWifi() {
   tft.setTextDatum(MC_DATUM);
   tft.setTextSize(1);
   tft.drawString("Conectando WiFi...", TFT_W/2, TFT_H/2-16);
-  tft.drawString(WIFI_SSID, TFT_W/2, TFT_H/2);
+  tft.drawString(cfgWifiSsid, TFT_W/2, TFT_H/2);
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true, true);
   delay(100);
   WiFi.setSleep(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.begin(cfgWifiSsid, cfgWifiPass);
 
-  Serial.printf("[WiFi] conectando a %s\n", WIFI_SSID);
+  Serial.printf("[WiFi] conectando a %s\n", cfgWifiSsid);
 
   unsigned long inicio = millis();
   int dots = 0;
@@ -672,11 +925,10 @@ bool conectarWifi() {
   tft.setTextColor(C_RED, C_BG);
   tft.drawString("Erro ao conectar WiFi", TFT_W/2, TFT_H/2 - 30);
   tft.setTextColor(C_AMBER, C_BG);
-  tft.drawString(WIFI_SSID, TFT_W/2, TFT_H/2 - 14);
+  tft.drawString(cfgWifiSsid, TFT_W/2, TFT_H/2 - 14);
   tft.setTextColor(C_GRAY, C_BG);
   tft.drawString(nomeStatusWifi(), TFT_W/2, TFT_H/2 + 2);
-  tft.drawString("MQTT nao sera iniciado", TFT_W/2, TFT_H/2 + 16);
-  tft.drawString("BTN1 = tentar novamente", TFT_W/2, TFT_H/2 + 30);
+  tft.drawString("BTN1 = tentar novamente", TFT_W/2, TFT_H/2 + 16);
   return false;
 }
 
@@ -808,7 +1060,78 @@ bool iniciarConexoes(bool salvarErroProvisionamento) {
   publicarSensores();
   publicarBandejas();
   publicarDevice();
+  publicarTelemetry();
   return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WIFI SCAN
+// ═══════════════════════════════════════════════════════════════
+
+void escanearRedes() {
+  tft.fillScreen(C_BG);
+  tft.fillRect(0, 0, TFT_W, 22, C_HEADER);
+  tft.setTextColor(C_GREEN, C_HEADER);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextSize(1);
+  tft.drawString("sauderealmicroverdes.club", 6, 11);
+  tft.setTextColor(C_AMBER, C_HEADER);
+  tft.setTextDatum(MR_DATUM);
+  tft.drawString("ESCANEANDO...", TFT_W-6, 11);
+
+  tft.setTextColor(C_GRAY, C_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.drawString("Buscando redes WiFi...", TFT_W/2, TFT_H/2 - 10);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true, true);
+  delay(200);
+
+  wifiCount = 0;
+  
+  int n = WiFi.scanNetworks();
+  Serial.printf("[WiFi] scan: %d redes encontradas\n", n);
+
+  if (n <= 0) {
+    tft.setTextColor(C_RED, C_BG);
+    tft.drawString("Nenhuma rede encontrada!", TFT_W/2, TFT_H/2 + 10);
+    tft.setTextColor(C_GRAY, C_BG);
+    tft.drawString("BTN1 = tentar novamente", TFT_W/2, TFT_H/2 + 26);
+    return;
+  }
+
+  // Ordena por RSSI (melhor sinal primeiro)
+  int indices[n];
+  for (int i = 0; i < n; i++) indices[i] = i;
+  
+  // Simple bubble sort by RSSI
+  for (int i = 0; i < n - 1; i++) {
+    for (int j = 0; j < n - i - 1; j++) {
+      if (WiFi.RSSI(indices[j]) < WiFi.RSSI(indices[j+1])) {
+        int temp = indices[j];
+        indices[j] = indices[j+1];
+        indices[j+1] = temp;
+      }
+    }
+  }
+
+  for (int i = 0; i < n && i < MAX_NETWORKS; i++) {
+    int idx = indices[i];
+    String ssid = WiFi.SSID(idx);
+    if (ssid.length() > 0) { // Ignora redes ocultas
+      wifiList[wifiCount] = ssid;
+      wifiRssi[wifiCount] = WiFi.RSSI(idx);
+      wifiEnc[wifiCount] = WiFi.encryptionType(idx);
+      wifiCount++;
+    }
+  }
+
+  WiFi.scanDelete();
+  
+  Serial.printf("[WiFi] %d redes listadas (ocultas ignoradas)\n", wifiCount);
+
+  wifiSelectedIndex = 0;
+  wifiScrollOffset = 0;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -860,9 +1183,16 @@ void setup() {
     }
   } else {
     modo = 0;
+    provState = PROV_WIFI_SELECT;
     editBroker[0] = '\0';
+    editWifiPass[0] = '\0';
+    editDev[0] = '\0';
     gerarNome(editDev, sizeof(editDev));
-    desenharProvisionamento();
+    npLinha = 0; npCol = 0; campoAtivo = 0; npCharPassIdx = 0;
+
+    // Escaneia as redes ja no setup
+    escanearRedes();
+    desenharTelaScanWiFi();
   }
 }
 
@@ -876,43 +1206,140 @@ void loop() {
     bool b0 = (digitalRead(BTN0) == LOW && millis()-lastBtn0 > DEBOUNCE);
     bool b1 = (digitalRead(BTN1) == LOW && millis()-lastBtn1 > DEBOUNCE);
 
-    if (b0) {
-      lastBtn0 = millis();
-      moverCursor();
-      desenharProvisionamento();
+    // ── WiFi Scan State ───────────────────────────────────────
+    if (provState == PROV_WIFI_SELECT) {
+      if (b0) {
+        lastBtn0 = millis();
+        if (wifiCount > 0) {
+          wifiSelectedIndex++;
+          if (wifiSelectedIndex >= wifiCount) wifiSelectedIndex = 0;
+          desenharTelaScanWiFi();
+        }
+      }
+
+      if (b1) {
+        lastBtn1 = millis();
+        if (wifiCount == 0) {
+          // Tenta escanear novamente
+          escanearRedes();
+          desenharTelaScanWiFi();
+        } else {
+          // Selecionou uma rede
+          strncpy(cfgWifiSsid, wifiList[wifiSelectedIndex].c_str(), sizeof(cfgWifiSsid)-1);
+          cfgWifiSsid[sizeof(cfgWifiSsid)-1] = '\0';
+
+          // Se rede aberta (sem senha), vai direto para broker
+          if (wifiEnc[wifiSelectedIndex] == 0) {
+            editWifiPass[0] = '\0';
+            provState = PROV_BROKER;
+            npLinha = 0; npCol = 0; campoAtivo = 0;
+            desenharTelaProvisionamento();
+          } else {
+            // Rede com senha: vai para tela de digitar senha
+            editWifiPass[0] = '\0';
+            npLinha = 0; npCol = 0; npCharPassIdx = 0;
+            provState = PROV_WIFI_PASS;
+            desenharTelaWifiPass();
+          }
+        }
+      }
+      return;
     }
 
-    if (b1) {
-      lastBtn1 = millis();
-
-      if (erroWifiPendente || erroMqttPendente) {
-        if (iniciarConexoes(true)) {
-          modo = 1;
-          desenharMonitor();
-        }
-        return;
+    // ── WiFi Password State ───────────────────────────────────
+    if (provState == PROV_WIFI_PASS) {
+      if (b0) {
+        lastBtn0 = millis();
+        moverCursor();
+        desenharTelaWifiPass();
       }
 
-      bool pronto = pressionarTecla();
-      desenharProvisionamento();
+      if (b1) {
+        lastBtn1 = millis();
+        bool pronto = pressionarTeclaWifiPass();
+        desenharTelaWifiPass();
 
-      if (pronto && strlen(editBroker) > 4) {
-        strncpy(cfgBroker,  editBroker, sizeof(cfgBroker)-1);
-        cfgBroker[sizeof(cfgBroker)-1] = '\0';
-        normalizarBroker(cfgBroker);
-        strncpy(cfgDevName, editDev, sizeof(cfgDevName)-1);
-        cfgDevName[sizeof(cfgDevName)-1] = '\0';
-        salvarConfig();
-        if (iniciarConexoes(true)) {
-          modo = 1;
-          desenharMonitor();
+        if (pronto) {
+          if (strlen(editWifiPass) == 0) {
+            // Se apertou OK sem senha, volta pra selecao
+            provState = PROV_WIFI_SELECT;
+            desenharTelaScanWiFi();
+          } else {
+            strncpy(cfgWifiPass, editWifiPass, sizeof(cfgWifiPass)-1);
+            cfgWifiPass[sizeof(cfgWifiPass)-1] = '\0';
+
+            // Tenta conectar ao WiFi
+            if (conectarWifi()) {
+              // WiFi conectou! Vai para configuracao do broker
+              provState = PROV_BROKER;
+              npLinha = 0; npCol = 0; campoAtivo = 0;
+              desenharTelaProvisionamento();
+            } else {
+              // Falhou - volta pra tela de senha
+              erroWifiPendente = true;
+              // Aguarda no loop pra tentar de novo
+            }
+          }
         }
       }
+
+      // Se wifi falhou e BTN1 foi pressionado para tentar novamente
+      if (erroWifiPendente && b1 && millis()-lastBtn1 > DEBOUNCE) {
+        lastBtn1 = millis();
+        if (conectarWifi()) {
+          erroWifiPendente = false;
+          provState = PROV_BROKER;
+          npLinha = 0; npCol = 0; campoAtivo = 0;
+          desenharTelaProvisionamento();
+        } else {
+          // Volta pra tela de senha
+          desenharTelaWifiPass();
+        }
+      }
+      return;
+    }
+
+    // ── Broker Config State ───────────────────────────────────
+    if (provState == PROV_BROKER) {
+      if (b0) {
+        lastBtn0 = millis();
+        moverCursor();
+        desenharTelaProvisionamento();
+      }
+
+      if (b1) {
+        lastBtn1 = millis();
+
+        if (erroWifiPendente || erroMqttPendente) {
+          if (iniciarConexoes(true)) {
+            modo = 1;
+            desenharMonitor();
+          }
+          return;
+        }
+
+        bool pronto = pressionarTeclaBroker();
+        desenharTelaProvisionamento();
+
+        if (pronto && strlen(editBroker) > 4) {
+          strncpy(cfgBroker,  editBroker, sizeof(cfgBroker)-1);
+          cfgBroker[sizeof(cfgBroker)-1] = '\0';
+          normalizarBroker(cfgBroker);
+          strncpy(cfgDevName, editDev, sizeof(cfgDevName)-1);
+          cfgDevName[sizeof(cfgDevName)-1] = '\0';
+          salvarConfig();
+          if (iniciarConexoes(true)) {
+            modo = 1;
+            desenharMonitor();
+          }
+        }
+      }
+      return;
     }
     return;
   }
 
-  // modo monitoramento
+  // ── modo monitoramento ──────────────────────────────────────
   if (WiFi.status() != WL_CONNECTED) {
     wifiConectado = false;
     mqttConectado = false;
@@ -941,12 +1368,12 @@ void loop() {
   if (mqttClient.connected()) mqttClient.loop();
 
   unsigned long agora = millis();
-  if (agora-lastSensores >= IV_SENSORES) { lastSensores = agora; publicarSensores(); }
+  if (agora-lastSensores >= IV_SENSORES) { lastSensores = agora; publicarSensores(); publicarTelemetry(); }
   if (agora-lastBandejas >= IV_BANDEJAS) { lastBandejas = agora; publicarBandejas(); }
   if (agora-lastDevice   >= IV_DEVICE)   { lastDevice   = agora; publicarDevice();   }
   if (agora-lastDisplay  >= IV_DISPLAY)  { lastDisplay  = agora; desenharMonitor();  }
 
-  // BTN0 segurado 3s → apaga config e reinicia
+  // BTN0 segurado 3s - apaga config e reinicia
   if (digitalRead(BTN0) == LOW) {
     if (millis()-lastBtn0 > 3000) { limparConfig(); ESP.restart(); }
   } else {
