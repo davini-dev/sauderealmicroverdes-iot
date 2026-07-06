@@ -6,7 +6,8 @@
 #    2. mcp         — MCP Server para agentes de IA (stdio)
 #    3. greenhouse  — React dashboard via Nginx (porta 8080)
 #
-#  Broker MQTT externo: 49.13.124.109:1883 (autenticação anônima)
+#  Broker MQTT padrão: ThingsBoard via Gateway-MQTT
+#  Infra: VPS do Instituto Saúde Real na Hetzner (Alemanha)
 #
 #  Uso:
 #    docker compose up -d          # subir tudo
@@ -18,11 +19,9 @@
 #    Dashboard:    http://localhost:8080
 #    Server API:   http://localhost:3000/status
 #    MCP Server:   docker compose -f docker-compose.yml run mcp
-#    MQTT Broker:  49.13.124.109:1883 (externo, anônimo)
+#    MQTT Broker:  ThingsBoard via Gateway-MQTT (padrão)
 #
 #  ════════════════════════════════════════════════════════════════
-
-version: "3.9"
 
 x-common-logging: &common-logging
   driver: json-file
@@ -39,7 +38,7 @@ services:
 
   # ════════════════════════════════════════════════════════
   #  1. Server — MQTT Aggregator + HTTP API
-#  Conecta no broker 49.13.124.109:1883 (autenticação anônima)
+  #  Conecta no broker padrão do ThingsBoard/Gateway-MQTT
   # ════════════════════════════════════════════════════════
   server:
     build:
@@ -50,8 +49,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      MQTT_BROKER_URL: "49.13.124.109"
-      MQTT_BROKER_PORT: 1883
+      MQTT_BROKER_URL: ${MQTT_BROKER_URL:-thingsboard-gateway-host}
+      MQTT_BROKER_PORT: ${MQTT_BROKER_PORT:-1883}
     ports:
       - "3000:3000"
     networks:
@@ -87,7 +86,7 @@ services:
 
   # ════════════════════════════════════════════════════════
   #  3. Greenhouse — Dashboard React via Nginx
-#  Serve o build estático e proxia /api/* para o server
+  #  Serve o build estático e proxia /api/* para o server
   # ════════════════════════════════════════════════════════
   greenhouse:
     build:

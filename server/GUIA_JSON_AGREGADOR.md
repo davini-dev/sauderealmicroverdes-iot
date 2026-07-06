@@ -1,4 +1,4 @@
-# 📊 JSON Agregador de Sensores - Render.com
+# 📊 JSON Agregador de Sensores - VPS Hetzner
 
 ## 🎯 Visão Geral
 
@@ -22,12 +22,12 @@ curl https://seu-app.onrender.com/status
   "app": {
     "nome": "MQTT Sensor Aggregator",
     "versao": "1.0.0",
-    "ambiente": "Render.com",
+  "ambiente": "VPS Hetzner (Alemanha)",
     "uptime": 3456,
     "memoria_mb": 45
   },
   "mqtt": {
-    "servidor": "49.13.124.109",
+  "servidor": "thingsboard-gateway-host",
     "porta": 1883,
     "protocolo": "mqtt (TCP)",
     "status": "conectado",
@@ -216,9 +216,9 @@ ESP32_1 (MQTT)          ESP32_2 (MQTT)
     ↓                       ↓
     └───────────┬───────────┘
                 ↓
-    Broker MQTT 49.13.124.109:1883 (auth anônima)
+    Broker MQTT ThingsBoard Gateway-MQTT
                 ↓
-    Node.js (Render.com)
+    Node.js (VPS Hetzner)
     ├─ Recebe MQTT
     ├─ Agrega em JSON
     └─ Mantém estado
@@ -350,9 +350,10 @@ fetch('/devices')
 "start": "node claude_mqtt_render_aggregator.js"
 
 # Environment variables
-MQTT_BROKER_URL=49.13.124.109
+MQTT_BROKER_URL=thingsboard-gateway-host
 MQTT_BROKER_PORT=1883
-MQTT_PASSWORD=mhda
+MQTT_USER=QBlEQkAvzAALcjiCiyxI
+MQTT_PASSWORD=
 NODE_ENV=production
 ```
 

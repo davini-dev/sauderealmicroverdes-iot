@@ -38,7 +38,7 @@ struct Pub        { char t[48]; char v[16]; char h[10]; };
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 
 // ── MQTT Credentials ──────────────────────────────────────────
-const char* MQTT_USER = "vDiaTbIzinPbEMtSal4P";
+const char* MQTT_USER = "QBlEQkAvzAALcjiCiyxI";
 const char* MQTT_PASS = "";
 
 // ── Botoes fisicos ────────────────────────────────────────────
@@ -134,7 +134,6 @@ int wifiScanAttempts = 0;
 #define T_IRR       "microverdes/cmd/irrigacao"
 #define T_DEVICE    "microverdes/device/info"
 #define T_BANDEJA   "microverdes/bandeja/"
-#define T_TELEMETRY "v1/devices/me/telemetry"
 
 // ── Intervalos ────────────────────────────────────────────────
 const unsigned long IV_SENSORES = 10000;
@@ -281,32 +280,6 @@ void publicarDevice() {
   char payload[256];
   serializeJson(doc, payload);
   pub(T_DEVICE, payload);
-}
-
-void publicarTelemetry() {
-  // Publica todos os sensores no topico ThingsBoard telemetry
-  // Segue a logica: mosquitto_pub -d -q 1 -h broker_ip -p 1883
-  //   -t v1/devices/me/telemetry -u "vDiaTbIzinPbEMtSal4P"
-  //   -m "{temperature:25}"
-  // Usa o mesmo token (MQTT_USER) ja configurado na conexao MQTT
-  float temp = simTemp.valor;
-  float ar   = simAr.valor;
-  float lux  = simLuz.valor;
-  float solo = simSolo.valor;
-
-  StaticJsonDocument<256> doc;
-  doc["temperature"] = round(temp * 10.0) / 10.0;
-  doc["humidity"]    = round(solo * 10.0) / 10.0;
-  doc["air"]         = round(ar   * 10.0) / 10.0;
-  doc["light"]       = (int)round(lux);
-  doc["irrigation"]  = irrigacaoOn ? "ON" : "OFF";
-  doc["mist"]        = neblinaOn   ? "ON" : "OFF";
-
-  char payload[256];
-  serializeJson(doc, payload);
-  // ThingsBoard telemetry: sem retain, apenas publicar
-  mqttClient.publish(T_TELEMETRY, payload);
-  regPub(T_TELEMETRY, payload);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -600,7 +573,7 @@ void desenharTelaProvisionamento() {
   tft.setTextColor(C_DKGREEN, C_BG);
   tft.drawString("Token:", 6, y);
   tft.setTextColor(C_GREEN, C_BG);
-  tft.drawString("vDiaTbIzinPbEMtSal4P", 62, y);
+  tft.drawString("QBlEQkAvzAALcjiCiyxI", 62, y);
   y += 14;
 
   // campo broker
@@ -1057,10 +1030,9 @@ bool iniciarConexoes(bool salvarErroProvisionamento) {
   erroWifiPendente = false;
   erroMqttPendente = false;
   startMs = millis();
+  publicarDevice();
   publicarSensores();
   publicarBandejas();
-  publicarDevice();
-  publicarTelemetry();
   return true;
 }
 
@@ -1368,7 +1340,7 @@ void loop() {
   if (mqttClient.connected()) mqttClient.loop();
 
   unsigned long agora = millis();
-  if (agora-lastSensores >= IV_SENSORES) { lastSensores = agora; publicarSensores(); publicarTelemetry(); }
+  if (agora-lastSensores >= IV_SENSORES) { lastSensores = agora; publicarSensores(); }
   if (agora-lastBandejas >= IV_BANDEJAS) { lastBandejas = agora; publicarBandejas(); }
   if (agora-lastDevice   >= IV_DEVICE)   { lastDevice   = agora; publicarDevice();   }
   if (agora-lastDisplay  >= IV_DISPLAY)  { lastDisplay  = agora; desenharMonitor();  }

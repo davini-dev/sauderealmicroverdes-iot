@@ -7,7 +7,7 @@ Sistema completo de monitoramento para microverdes com ESP32, MQTT e dashboard R
 ```
 ESP32-S3 (LilyGo T-Display)
     ↓ WiFi + MQTT (TCP 1883)
-Broker MQTT: 49.13.124.109:1883 (auth anônima)
+Broker MQTT: ThingsBoard via Gateway-MQTT (padrão)
     ↓
 server/ (Node.js — aggregator + HTTP API)
     ↓ /dashboard-data
@@ -59,7 +59,7 @@ docker compose logs -f server
 ```bash
 cd server
 npm install
-MQTT_BROKER_URL=49.13.124.109 MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
+MQTT_BROKER_URL=thingsboard-gateway-host MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
 ```
 
 **Greenhouse:**

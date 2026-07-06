@@ -1,5 +1,5 @@
 /*
-  Claude Code + MQTT (TCP) + Render.com
+  Claude Code + MQTT (TCP) + VPS Hetzner
   
   Agregação de dados do microverdes-iot
   Tópicos compatíveis com arduino/microverdes.ino
@@ -10,11 +10,14 @@
   npm install mqtt dotenv
   node claude_mqtt_render_aggregator.js
   
-  Variáveis de ambiente (.env):
-  MQTT_BROKER_URL=49.13.124.109
+  Variáveis de ambiente opcionais:
+  PORT=3000
+  MQTT_BROKER_URL=<thingsboard-gateway-host>
   MQTT_BROKER_PORT=1883
-  MQTT_USER=
-  MQTT_PASSWORD=
+
+  Credenciais MQTT fixas no código:
+  usuário = QBlEQkAvzAALcjiCiyxI
+  senha   = (em branco)
 */
 
 require('dotenv').config();
@@ -113,6 +116,10 @@ server.listen(port, () => {
 
 let estado = {
   dispositivos: {},
+  pendentes: {
+    sensores: {},
+    bandejas: {}
+  },
   ultimaAtualizacao: null,
   totalMensagens: 0
 };
@@ -162,18 +169,21 @@ const TOPICOS = {
   NEBLINA:   'microverdes/status/neblina',
   IRRIGACAO: 'microverdes/cmd/irrigacao',
   DEVICE:    'microverdes/device/info',
-  DEVICE_STATUS: 'microverdes/device/status',  // ← LWT topic (will do ESP32)
   BANDEJA:   'microverdes/bandeja/'
 };
 
-// ==================== MQTT CONFIG (TCP - AUTENTICAÇÃO ANÔNIMA) ====================
-const BROKER_URL = process.env.MQTT_BROKER_URL || '49.13.124.109';
+// ==================== MQTT CONFIG (TCP - THINGSBOARD GATEWAY) ====================
+const BROKER_URL = process.env.MQTT_BROKER_URL || 'thingsboard-gateway-host';
 const BROKER_PORT = parseInt(process.env.MQTT_BROKER_PORT) || 1883;
+const MQTT_USER = 'QBlEQkAvzAALcjiCiyxI';
+const MQTT_PASS = '';
 
 const MQTT_OPTIONS = {
   clientId: 'sauderealmicroverdes_aggregator_' + Date.now(),
   protocol: 'mqtt',
   port: BROKER_PORT,
+  username: MQTT_USER,
+  password: MQTT_PASS,
   
   clean: true,
   reconnectPeriod: 5000,
@@ -199,7 +209,8 @@ console.log('╚═════════════════════�
 
 console.log(`📡 Configuração MQTT:`);
 console.log(`   Servidor: ${BROKER_URL}:${BROKER_PORT}`);
-console.log(`   Autenticação: Anônima`);
+console.log(`   Usuário: ${MQTT_USER}`);
+console.log(`   Senha: ${MQTT_PASS ? 'definida' : 'em branco'}`);
 console.log(`   Protocolo: mqtt (TCP)\n`);
 
 const brokerUrl = `mqtt://${BROKER_URL}:${BROKER_PORT}`;
@@ -225,31 +236,16 @@ client.on('connect', () => {
     { retain: true }
   );
   
-  // Subscribe em TODOS os tópicos do projeto
+  // Subscribe apenas nos tópicos simulados pelo firmware
   const topicos = [
-    // Sensores individuais (valores simples)
     TOPICOS.TEMP,           // microverdes/sensor/temp
     TOPICOS.AR,             // microverdes/sensor/ar
     TOPICOS.LUZ,            // microverdes/sensor/luz
     TOPICOS.UMIDADE,        // microverdes/sensor/umidade
     TOPICOS.NEBLINA,        // microverdes/status/neblina
     TOPICOS.IRRIGACAO,      // microverdes/cmd/irrigacao
-    
-    // ★ LWT: dispositivo desconectou/desligado (broker publica automaticamente)
-    TOPICOS.DEVICE_STATUS,  // microverdes/device/status
-
-    // Info do dispositivo (JSON)
     TOPICOS.DEVICE,         // microverdes/device/info
-    
-    // Bandejas (wildcard para sub-tópicos)
     TOPICOS.BANDEJA + '#',  // microverdes/bandeja/+
-    
-    // Tópicos legados (compatibilidade com MQTT_TOPICS_V2.md)
-    'devices/+/online',
-    'devices/+/info',
-    'devices/+/sensor/+',
-    'devices/+/sensors',
-    'sensores/+'
   ];
   
   const sub = client.subscribe(topicos);
@@ -257,21 +253,6 @@ client.on('connect', () => {
   topicos.forEach(t => console.log(`   - ${t}`));
   console.log();
 });
-
-/**
- * Normaliza o ID do dispositivo a partir do tópico ou payload
- */
-function extrairDeviceId(topic, data) {
-  // Formato v2: devices/esp32_01/info → esp32_01
-  const devMatch = topic.match(/^devices\/([^/]+)\//);
-  if (devMatch) return devMatch[1];
-  
-  // Payload JSON com campo id
-  if (data && data.id) return data.id;
-  
-  // Padrão microverdes → usa nome do device do payload ou "default"
-  return data?.id || 'ESP32_DEFAULT';
-}
 
 /**
  * Converte payload para número se possível
@@ -332,29 +313,36 @@ function processarBandeja(topic, payload) {
   }
 }
 
+function aplicarPendentes(deviceId) {
+  const pendentesSensores = estado.pendentes.sensores[deviceId] || {};
+  const pendentesBandejas = estado.pendentes.bandejas[deviceId] || {};
+
+  Object.entries(pendentesSensores).forEach(([tipo, dados]) => {
+    estado.dispositivos[deviceId].sensores[tipo] = dados;
+  });
+  Object.entries(pendentesBandejas).forEach(([id, dados]) => {
+    estado.dispositivos[deviceId].bandejas[id] = dados;
+  });
+
+  delete estado.pendentes.sensores[deviceId];
+  delete estado.pendentes.bandejas[deviceId];
+}
+
 // ==================== MESSAGE HANDLER ====================
 
 client.on('message', (topic, message) => {
   try {
     const payload = message.toString();
     const timestamp = new Date();
-    
-    // ──── LWT: dispositivo desconectou/desligado ────
-    // Broker publicou automaticamente quando a conexão TCP do ESP32 caiu
-    if (topic === TOPICOS.DEVICE_STATUS) {
-      let data = {};
-      try { data = JSON.parse(payload); } catch {}
-      const deviceId = data.id || 'ESP32_DEFAULT';
-      marcarOfflinePorLWT(deviceId);
-      estado.ultimaAtualizacao = timestamp.toISOString();
-      estado.totalMensagens++;
-      return;
-    }
 
     // ── DEVICE INFO (JSON) ──
     if (topic === TOPICOS.DEVICE) {
       const data = JSON.parse(payload);
-      const deviceId = data.id || 'ESP32_DEFAULT';
+      const deviceId = data.id;
+      if (!deviceId) {
+        console.warn('[AGG] device/info sem id ignorado');
+        return;
+      }
       
       if (!estado.dispositivos[deviceId]) {
         estado.dispositivos[deviceId] = {
@@ -373,14 +361,17 @@ client.on('message', (topic, message) => {
           bandejas: {}
         };
         console.log(`\n✨ [NOVO] Dispositivo: ${deviceId} (IP: ${data.ip})`);
-      } else {
-        estado.dispositivos[deviceId].online = true;
-        estado.dispositivos[deviceId].lastSeen = timestamp.toISOString();
-        estado.dispositivos[deviceId].ip = data.ip || estado.dispositivos[deviceId].ip;
-        estado.dispositivos[deviceId].rssi = data.rssi ?? estado.dispositivos[deviceId].rssi;
-        estado.dispositivos[deviceId].uptime = data.uptime || estado.dispositivos[deviceId].uptime;
-        estado.dispositivos[deviceId].heap_free = data.heap_free ?? estado.dispositivos[deviceId].heap_free;
       }
+
+      estado.dispositivos[deviceId].online = true;
+      estado.dispositivos[deviceId].lastSeen = timestamp.toISOString();
+      estado.dispositivos[deviceId].ip = data.ip || estado.dispositivos[deviceId].ip;
+      estado.dispositivos[deviceId].mac = data.mac || estado.dispositivos[deviceId].mac;
+      estado.dispositivos[deviceId].rssi = data.rssi ?? estado.dispositivos[deviceId].rssi;
+      estado.dispositivos[deviceId].uptime = data.uptime || estado.dispositivos[deviceId].uptime;
+      estado.dispositivos[deviceId].heap_free = data.heap_free ?? estado.dispositivos[deviceId].heap_free;
+      estado.dispositivos[deviceId].modo = data.modo || estado.dispositivos[deviceId].modo;
+      aplicarPendentes(deviceId);
       
       estado.ultimaAtualizacao = timestamp.toISOString();
       estado.totalMensagens++;
@@ -391,22 +382,20 @@ client.on('message', (topic, message) => {
     if (topic.startsWith(TOPICOS.BANDEJA)) {
       const bandeja = processarBandeja(topic, message);
       if (!bandeja) return;
-      
-      // Bandejas ficam no dispositivo padrão (ou no primeiro encontrado)
-      const deviceId = Object.keys(estado.dispositivos)[0] || 'ESP32_DEFAULT';
-      
-      if (!estado.dispositivos[deviceId]) {
-        estado.dispositivos[deviceId] = {
-          id: deviceId,
-          nome: deviceId,
-          online: true,
-          firstSeen: timestamp.toISOString(),
-          lastSeen: timestamp.toISOString(),
-          sensores: {},
-          bandejas: {}
+
+      const deviceId = Object.keys(estado.dispositivos)[0];
+      if (!deviceId) {
+        const pendingKey = 'microverdes';
+        if (!estado.pendentes.bandejas[pendingKey]) estado.pendentes.bandejas[pendingKey] = {};
+        estado.pendentes.bandejas[pendingKey][bandeja.id] = {
+          ...bandeja,
+          timestamp: timestamp.toISOString()
         };
+        estado.ultimaAtualizacao = timestamp.toISOString();
+        estado.totalMensagens++;
+        return;
       }
-      
+
       estado.dispositivos[deviceId].bandejas[bandeja.id] = {
         ...bandeja,
         timestamp: timestamp.toISOString()
@@ -423,20 +412,21 @@ client.on('message', (topic, message) => {
     // ── SENSORES SIMPLES ──
     const sensorInfo = processarSensorSimple(topic, payload);
     if (sensorInfo) {
-      const deviceId = Object.keys(estado.dispositivos)[0] || 'ESP32_DEFAULT';
-      
-      if (!estado.dispositivos[deviceId]) {
-        estado.dispositivos[deviceId] = {
-          id: deviceId,
-          nome: deviceId,
-          online: true,
-          firstSeen: timestamp.toISOString(),
-          lastSeen: timestamp.toISOString(),
-          sensores: {},
-          bandejas: {}
+      const deviceId = Object.keys(estado.dispositivos)[0];
+      if (!deviceId) {
+        const pendingKey = 'microverdes';
+        if (!estado.pendentes.sensores[pendingKey]) estado.pendentes.sensores[pendingKey] = {};
+        estado.pendentes.sensores[pendingKey][sensorInfo.tipo] = {
+          valor: sensorInfo.valor,
+          unidade: sensorInfo.unidade,
+          timestamp: timestamp.toISOString(),
+          topico: topic
         };
+        estado.ultimaAtualizacao = timestamp.toISOString();
+        estado.totalMensagens++;
+        return;
       }
-      
+
       estado.dispositivos[deviceId].sensores[sensorInfo.tipo] = {
         valor: sensorInfo.valor,
         unidade: sensorInfo.unidade,
@@ -451,155 +441,6 @@ client.on('message', (topic, message) => {
       console.log(`[${tempo}] 📊 ${deviceId.padEnd(16)} → ${sensorInfo.tipo.toUpperCase().padEnd(14)}: ${sensorInfo.valor}${sensorInfo.unidade}`);
       return;
     }
-    
-    // ── FORMATO V2 (compatibilidade) ──
-    // devices/{id}/online
-    if (/\/online$/.test(topic)) {
-      const match = topic.match(/^devices\/([^/]+)\/online$/);
-      if (match) {
-        const deviceId = match[1];
-        const online = payload === 'true' || payload === '1' || payload === 'on';
-        
-        if (!estado.dispositivos[deviceId]) {
-          estado.dispositivos[deviceId] = {
-            id: deviceId,
-            nome: deviceId,
-            online: online,
-            firstSeen: timestamp.toISOString(),
-            lastSeen: timestamp.toISOString(),
-            sensores: {},
-            bandejas: {}
-          };
-        }
-        
-        estado.dispositivos[deviceId].online = online;
-        estado.dispositivos[deviceId].lastSeen = timestamp.toISOString();
-        estado.ultimaAtualizacao = timestamp.toISOString();
-        estado.totalMensagens++;
-        return;
-      }
-    }
-    
-    // devices/{id}/info
-    if (/\/info$/.test(topic)) {
-      const match = topic.match(/^devices\/([^/]+)\/info$/);
-      if (match) {
-        const deviceId = match[1];
-        const data = JSON.parse(payload);
-        
-        if (!estado.dispositivos[deviceId]) {
-          estado.dispositivos[deviceId] = {
-            id: deviceId,
-            nome: data?.nome || deviceId,
-            online: true,
-            firstSeen: timestamp.toISOString(),
-            lastSeen: timestamp.toISOString(),
-            sensores: {},
-            bandejas: {}
-          };
-        }
-        
-        estado.dispositivos[deviceId] = {
-          ...estado.dispositivos[deviceId],
-          ...data,
-          id: deviceId,
-          online: true,
-          lastSeen: timestamp.toISOString()
-        };
-        estado.ultimaAtualizacao = timestamp.toISOString();
-        estado.totalMensagens++;
-        return;
-      }
-    }
-    
-    // devices/{id}/sensor/{tipo}
-    const sensorV2Match = topic.match(/^devices\/([^/]+)\/sensor\/([^/]+)$/);
-    if (sensorV2Match) {
-      const deviceId = sensorV2Match[1];
-      const sensorTipo = sensorV2Match[2];
-      
-      if (!estado.dispositivos[deviceId]) {
-        estado.dispositivos[deviceId] = {
-          id: deviceId,
-          nome: deviceId,
-          online: true,
-          firstSeen: timestamp.toISOString(),
-          lastSeen: timestamp.toISOString(),
-          sensores: {},
-          bandejas: {}
-        };
-      }
-      
-      estado.dispositivos[deviceId].sensores[sensorTipo] = {
-        valor: parseValor(payload),
-        unidade: inferirUnidade(sensorTipo),
-        timestamp: timestamp.toISOString(),
-        topico: topic
-      };
-      estado.ultimaAtualizacao = timestamp.toISOString();
-      estado.totalMensagens++;
-      return;
-    }
-    
-    // devices/{id}/sensors (array completo)
-    const sensorsArrayMatch = topic.match(/^devices\/([^/]+)\/sensors$/);
-    if (sensorsArrayMatch) {
-      const deviceId = sensorsArrayMatch[1];
-      const sensores = JSON.parse(payload);
-      
-      if (!estado.dispositivos[deviceId]) {
-        estado.dispositivos[deviceId] = {
-          id: deviceId,
-          nome: deviceId,
-          online: true,
-          firstSeen: timestamp.toISOString(),
-          lastSeen: timestamp.toISOString(),
-          sensores: {},
-          bandejas: {}
-        };
-      }
-      
-      sensores.forEach(s => {
-        estado.dispositivos[deviceId].sensores[s.tipo || s.nome] = {
-          valor: s.valor,
-          unidade: s.unidade || inferirUnidade(s.tipo || s.nome),
-          timestamp: timestamp.toISOString()
-        };
-      });
-      estado.ultimaAtualizacao = timestamp.toISOString();
-      estado.totalMensagens++;
-      return;
-    }
-    
-    // sensores/{tipo} (formato legado v1)
-    const legadoMatch = topic.match(/^sensores\/([^/]+)$/);
-    if (legadoMatch) {
-      const sensorTipo = legadoMatch[1];
-      const deviceId = 'ESP32_DEFAULT';
-      
-      if (!estado.dispositivos[deviceId]) {
-        estado.dispositivos[deviceId] = {
-          id: deviceId,
-          nome: deviceId,
-          online: true,
-          firstSeen: timestamp.toISOString(),
-          lastSeen: timestamp.toISOString(),
-          sensores: {},
-          bandejas: {}
-        };
-      }
-      
-      estado.dispositivos[deviceId].sensores[sensorTipo] = {
-        valor: parseValor(payload),
-        unidade: inferirUnidade(sensorTipo),
-        timestamp: timestamp.toISOString(),
-        topico: topic
-      };
-      estado.ultimaAtualizacao = timestamp.toISOString();
-      estado.totalMensagens++;
-      return;
-    }
-    
   } catch (err) {
     console.error(`[ERRO] Falha ao processar mensagem em "${topic}": ${err.message}`);
   }
@@ -655,7 +496,7 @@ function gerarStatusCompleto() {
     app: {
       nome: 'Saúde Real Microverdes IoT',
       versao: '2.0.0',
-      plataforma: 'Render.com',
+      plataforma: 'VPS Hetzner (Alemanha)',
       uptime: Math.floor(process.uptime()),
       memoria_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
     },
@@ -664,7 +505,7 @@ function gerarStatusCompleto() {
       servidor: BROKER_URL,
       porta: BROKER_PORT,
       protocolo: 'mqtt (TCP)',
-      autenticacao: 'anônima',
+      autenticacao: 'usuário/senha',
       status: conexaoAtiva ? 'conectado' : 'desconectado'
     },
     
@@ -782,8 +623,8 @@ function obterDadosDashboard() {
     };
   }
 
-  // Prioriza dispositivo real (não ESP32_DEFAULT) como principal
-  let principal = dispositivos.find(d => d.id !== 'ESP32_DEFAULT' && d.ip && d.ip !== 'N/A');
+  // Prioriza um dispositivo com IP válido como principal
+  let principal = dispositivos.find(d => d.ip && d.ip !== 'N/A');
   if (!principal) principal = dispositivos[0];
   
   // Mescla sensores de todos os dispositivos no principal
@@ -885,7 +726,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // ==================== STARTUP ====================
-console.log('🌱 Saúde Real Microverdes IoT — Render.com');
+console.log('🌱 Saúde Real Microverdes IoT — VPS Hetzner');
 console.log('   Tópicos compatíveis: microverdes/sensor/*, microverdes/bandeja/*\n');
 
 setTimeout(() => {

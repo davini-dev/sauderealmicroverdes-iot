@@ -15,7 +15,7 @@ Acessos:
 **Server:**
 ```bash
 cd server && npm install
-MQTT_BROKER_URL=49.13.124.109 node claude_mqtt_render_aggregator.js
+MQTT_BROKER_URL=thingsboard-gateway-host node claude_mqtt_render_aggregator.js
 ```
 
 **Greenhouse:**
@@ -25,9 +25,9 @@ cd greenhouse && npm install && npm run dev
 
 ## Broker MQTT
 
-- **Host:** 49.13.124.109
+- **Host:** ThingsBoard Gateway-MQTT
 - **Porta:** 1883 (TCP)
-- **Autenticação:** Anônima
+- **Autenticação:** usuário `QBlEQkAvzAALcjiCiyxI` e senha em branco
 
 ## Tópicos
 

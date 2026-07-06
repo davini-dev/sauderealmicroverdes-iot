@@ -212,7 +212,7 @@ function mapearDashboard(data: DashboardData) {
 
   // ── Device ──
   const device = {
-    id:     dev?.id || 'SR-2026-A3F1',
+    id:     dev?.id || '---',
     ip:     dev?.ip || '---',
     rssi:   dev?.rssi ?? -70,
     uptime: dev?.uptime || '---',

@@ -2,6 +2,7 @@
 
 > Painel de monitoramento em tempo real para cultivo de microverdes em Praia Grande, SP.
 > **sauderealmicroverdes.club** · Instituto Saúde Real Microverdes
+> Toda a stack roda na VPS do Instituto Saúde Real na Hetzner, na Alemanha, com ThingsBoard Edge integrado ao ThingsBoard CE.
 
 ---
 
@@ -30,9 +31,10 @@
               │ MQTT over TCP (porta 1883)
               ▼
 ┌─────────────────────────┐
-│   Broker MQTT externo   │
-│   49.13.124.109:1883    │
-│   Auth anônima          │
+│   Broker MQTT do        │
+│   ThingsBoard           │
+│   ThingsBoard Gateway    │
+│   MQTT (padrão)          │
 └─────────────┬───────────┘
               │ subscribe tópicos microverdes/#
               ▼
@@ -133,7 +135,7 @@ npm run build
 | `microverdes/status/neblina` | `ON` / `OFF` | bidirecional |
 | `microverdes/cmd/irrigacao` | `ON` / `OFF` | bidirecional |
 | `microverdes/bandeja/A1` | `{"nome":"Girassol A1","umidade":72}` | ESP32 → broker |
-| `microverdes/device/info` | `{"id":"SR-2026-A3F1","ip":"...","rssi":-58,"uptime":"01h02m","heap_free":280000}` | ESP32 → broker |
+| `microverdes/device/info` | `{"id":"<device-id>","ip":"...","rssi":-58,"uptime":"01h02m","heap_free":280000}` | ESP32 → broker |
 
 ### Bandejas
 
@@ -182,7 +184,9 @@ curl -X POST http://localhost:3000/cmd \
 |---|---|
 | Hardware | LilyGo T-Display S3 (ESP32-S3) |
 | Display | TFT 1.9" ST7789 — TFT_eSPI |
-| Broker MQTT | 49.13.124.109:1883 (auth anônima) |
+| Broker MQTT | ThingsBoard via Gateway-MQTT (padrão) |
+| Infraestrutura | VPS do Instituto Saúde Real na Hetzner, Alemanha |
+| Plataforma IoT | ThingsBoard Edge + ThingsBoard CE |
 | Backend | Node.js + mqtt.js |
 | Frontend | React 19 + Vite + TypeScript + Tailwind CSS 4 |
 | Gráficos | Recharts |

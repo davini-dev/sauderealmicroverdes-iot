@@ -7,12 +7,14 @@ Automação completa de monitoramento para microverdes usando ESP32, MQTT e Reac
 ```
 ESP32-S3 (LilyGo T-Display)
     ↓ WiFi + MQTT (TCP 1883)
-Broker MQTT externo (49.13.124.109:1883, auth anônima)
+ThingsBoard via Gateway-MQTT (broker padrão do projeto)
     ↓
 server/ (Node.js — aggregator + HTTP API)
     ↓ /dashboard-data
 greenhouse/ (React + Nginx — dashboard web)
 ```
+
+Toda a stack roda na VPS do Instituto Saúde Real na Hetzner, na Alemanha, com ThingsBoard Edge rodando integrado ao ThingsBoard CE.
 
 ## ✨ Características
 
@@ -22,7 +24,9 @@ greenhouse/ (React + Nginx — dashboard web)
 - ✅ Dashboard web em tempo real (polling 3s)
 - ✅ Fallback automático para simulação se servidor indisponível
 - ✅ Docker Compose para deploy local
-- ✅ Broker MQTT externo (autenticação anônima)
+- ✅ Broker MQTT via ThingsBoard/Gateway-MQTT como padrão do projeto
+- ✅ Stack hospedada na VPS do Instituto Saúde Real na Hetzner, na Alemanha
+- ✅ ThingsBoard Edge integrado ao ThingsBoard CE em produção
 
 ## 🚀 Quick Start
 
@@ -52,7 +56,7 @@ Acessos:
 ```bash
 cd server
 npm install
-MQTT_BROKER_URL=49.13.124.109 MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
+MQTT_BROKER_URL=<thingsboard-gateway-host> MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
 ```
 
 **Greenhouse:**
@@ -108,7 +112,7 @@ Bandejas: `A1` (Girassol), `B2` (Rabanete), `C1` (Ervilha), `D3` (Brócolis), `E
 
 | Variável | Padrão | Descrição |
 |---|---|---|
-| `MQTT_BROKER_URL` | `49.13.124.109` | IP do broker MQTT |
+| `MQTT_BROKER_URL` | `thingsboard-gateway-host` | Host do broker MQTT do ThingsBoard |
 | `MQTT_BROKER_PORT` | `1883` | Porta TCP |
 | `PORT` | `3000` | Porta HTTP do servidor |
 
@@ -118,7 +122,7 @@ Editar no `.ino`:
 ```cpp
 const char* WIFI_SSID = "Internet";
 const char* WIFI_PASS = "12345678";
-// Broker configurado via numpad no boot ou hardcoded
+// Broker do ThingsBoard Gateway-MQTT configurado via numpad no boot ou hardcoded
 ```
 
 ## 🌐 API Endpoints
