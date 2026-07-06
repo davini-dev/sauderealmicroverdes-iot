@@ -24,7 +24,30 @@ require('dotenv').config();
 const mqtt = require('mqtt');
 const http = require('http');
 
-const now = () => new Date().toISOString();
+process.env.TZ = 'America/Sao_Paulo';
+
+const TIME_ZONE = 'America/Sao_Paulo';
+
+function formatTimestamp(date = new Date()) {
+  const dt = new Date(date);
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(dt);
+
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}-03:00`;
+}
+
+function now() {
+  return formatTimestamp(new Date());
+}
 const logger = {
   info: (...args) => console.log('[INFO]', now(), ...args),
   warn: (...args) => console.warn('[WARN]', now(), ...args),
@@ -123,9 +146,13 @@ let estado = {
     sensores: {},
     bandejas: {}
   },
-  ultimaAtualizacao: null,
+  ultimaAtualizacao: formatTimestamp(new Date()),
   totalMensagens: 0
 };
+
+function marcarAtualizacao(instant = new Date()) {
+  estado.ultimaAtualizacao = formatTimestamp(instant);
+}
 
 // Sem mensagem MQTT recente → dispositivo considerado offline
 // ESP32 publica device/info a cada 30s → 45s = ~1.5 ciclos perdidos
@@ -197,7 +224,7 @@ const MQTT_OPTIONS = {
     topic: 'microverdes/status/aggregator',
     payload: JSON.stringify({
       status: 'offline',
-      timestamp: new Date().toISOString()
+      timestamp: formatTimestamp(new Date())
     }),
     qos: 1,
     retain: true
@@ -224,7 +251,7 @@ client.on('connect', () => {
     'microverdes/status/aggregator',
     JSON.stringify({
       status: 'online',
-      timestamp: new Date().toISOString(),
+      timestamp: formatTimestamp(new Date()),
       funcao: 'aggregator',
       versao: '2.0.0'
     }),
@@ -345,8 +372,8 @@ client.on('message', (topic, message) => {
           mac: data.mac || 'N/A',
           rssi: data.rssi || 0,
           online: true,
-          firstSeen: timestamp.toISOString(),
-          lastSeen: timestamp.toISOString(),
+          firstSeen: formatTimestamp(timestamp),
+          lastSeen: formatTimestamp(timestamp),
           uptime: data.uptime || 'N/A',
           heap_free: data.heap_free || 0,
           modo: data.modo || 'N/A',
@@ -357,7 +384,7 @@ client.on('message', (topic, message) => {
       }
 
       estado.dispositivos[deviceId].online = true;
-      estado.dispositivos[deviceId].lastSeen = timestamp.toISOString();
+      estado.dispositivos[deviceId].lastSeen = formatTimestamp(timestamp);
       estado.dispositivos[deviceId].ip = data.ip || estado.dispositivos[deviceId].ip;
       estado.dispositivos[deviceId].mac = data.mac || estado.dispositivos[deviceId].mac;
       estado.dispositivos[deviceId].rssi = data.rssi ?? estado.dispositivos[deviceId].rssi;
@@ -366,7 +393,7 @@ client.on('message', (topic, message) => {
       estado.dispositivos[deviceId].modo = data.modo || estado.dispositivos[deviceId].modo;
       aplicarPendentes(deviceId);
       
-      estado.ultimaAtualizacao = timestamp.toISOString();
+      marcarAtualizacao(timestamp);
       estado.totalMensagens++;
       return;
     }
@@ -382,22 +409,22 @@ client.on('message', (topic, message) => {
         if (!estado.pendentes.bandejas[pendingKey]) estado.pendentes.bandejas[pendingKey] = {};
         estado.pendentes.bandejas[pendingKey][bandeja.id] = {
           ...bandeja,
-          timestamp: timestamp.toISOString()
+          timestamp: formatTimestamp(timestamp)
         };
-        estado.ultimaAtualizacao = timestamp.toISOString();
+        marcarAtualizacao(timestamp);
         estado.totalMensagens++;
         return;
       }
 
       estado.dispositivos[deviceId].bandejas[bandeja.id] = {
         ...bandeja,
-        timestamp: timestamp.toISOString()
+        timestamp: formatTimestamp(timestamp)
       };
-      estado.dispositivos[deviceId].lastSeen = timestamp.toISOString();
-      estado.ultimaAtualizacao = timestamp.toISOString();
+      estado.dispositivos[deviceId].lastSeen = formatTimestamp(timestamp);
+      marcarAtualizacao(timestamp);
       estado.totalMensagens++;
       
-      const tempo = timestamp.toLocaleTimeString('pt-BR');
+      const tempo = timestamp.toLocaleTimeString('pt-BR', { timeZone: TIME_ZONE });
       console.log(`[${tempo}] 🌻 ${deviceId} Bandeja ${bandeja.id}: umidade=${bandeja.umidade}%`);
       return;
     }
@@ -412,10 +439,10 @@ client.on('message', (topic, message) => {
         estado.pendentes.sensores[pendingKey][sensorInfo.tipo] = {
           valor: sensorInfo.valor,
           unidade: sensorInfo.unidade,
-          timestamp: timestamp.toISOString(),
+          timestamp: formatTimestamp(timestamp),
           topico: topic
         };
-        estado.ultimaAtualizacao = timestamp.toISOString();
+        marcarAtualizacao(timestamp);
         estado.totalMensagens++;
         return;
       }
@@ -423,14 +450,14 @@ client.on('message', (topic, message) => {
       estado.dispositivos[deviceId].sensores[sensorInfo.tipo] = {
         valor: sensorInfo.valor,
         unidade: sensorInfo.unidade,
-        timestamp: timestamp.toISOString(),
+        timestamp: formatTimestamp(timestamp),
         topico: topic
       };
-      estado.dispositivos[deviceId].lastSeen = timestamp.toISOString();
-      estado.ultimaAtualizacao = timestamp.toISOString();
+      estado.dispositivos[deviceId].lastSeen = formatTimestamp(timestamp);
+      marcarAtualizacao(timestamp);
       estado.totalMensagens++;
       
-      const tempo = timestamp.toLocaleTimeString('pt-BR');
+      const tempo = timestamp.toLocaleTimeString('pt-BR', { timeZone: TIME_ZONE });
       logger.info(`[${tempo}] ${deviceId.padEnd(16)} → ${sensorInfo.tipo.toUpperCase().padEnd(14)}: ${sensorInfo.valor}${sensorInfo.unidade}`);
       return;
     }
@@ -475,6 +502,7 @@ client.on('offline', () => {
 // ==================== FUNÇÕES DE RETORNO ====================
 
 function gerarStatusCompleto() {
+  marcarAtualizacao(new Date());
   const dispositivos = Object.values(estado.dispositivos);
   const totalSensores = dispositivos.reduce((acc, dev) => {
     return acc + Object.keys(dev.sensores || {}).length;
@@ -485,7 +513,7 @@ function gerarStatusCompleto() {
   
   return {
     ok: true,
-    ts: new Date().toISOString(),
+    ts: formatTimestamp(new Date()),
     app: {
       nome: 'Saúde Real Microverdes IoT',
       versao: '2.0.0',
@@ -532,7 +560,7 @@ function obterDispositivos() {
   const dispositivos = Object.values(estado.dispositivos);
   return {
     ok: true,
-    ts: new Date().toISOString(),
+    ts: formatTimestamp(new Date()),
     total: dispositivos.length,
     online: dispositivos.filter(d => d.online).length,
     offline: dispositivos.filter(d => !d.online).length,
@@ -574,7 +602,7 @@ function obterSensoresAgregados() {
   
   return {
     ok: true,
-    ts: new Date().toISOString(),
+    ts: formatTimestamp(new Date()),
     total: Object.keys(sensoresAgregados).length,
     sensores: sensoresAgregados
   };
@@ -597,7 +625,7 @@ function obterBandejas() {
   
   return {
     ok: true,
-    ts: new Date().toISOString(),
+    ts: formatTimestamp(new Date()),
     total: todasBandejas.length,
     bandejas: todasBandejas
   };
@@ -609,7 +637,7 @@ function obterDadosDashboard() {
   if (dispositivos.length === 0) {
     return {
       ok: true,
-      ts: new Date().toISOString(),
+      ts: formatTimestamp(new Date()),
       online: false,
       message: 'Nenhum dispositivo conectado',
       app: infoApp(),
@@ -633,7 +661,7 @@ function obterDadosDashboard() {
   
   return {
     ok: true,
-    ts: new Date().toISOString(),
+    ts: formatTimestamp(new Date()),
     online: true,
     dispositivo: {
       id: principal.id,
@@ -658,6 +686,11 @@ function obterDadosDashboard() {
 // Marca dispositivos sem heartbeat recente como offline
 setInterval(marcarDispositivosInativos, 15_000);// Intervalo reduzido de 60s → 15s
 
+// Mantém a última atualização viva mesmo sem novas mensagens MQTT
+setInterval(() => {
+  marcarAtualizacao(new Date());
+}, 10_000);
+
 // Publica telemetria de sensores no ThingsBoard a cada 3 segundos
 setInterval(() => {
   const dispositivos = Object.values(estado.dispositivos).filter(d => d.online);
@@ -668,7 +701,7 @@ setInterval(() => {
   
   // Reúne todos os sensores dos dispositivos ativos
   const telemetria = {
-    timestamp: new Date().toISOString(),
+    timestamp: formatTimestamp(new Date()),
     dispositivos: dispositivos.length,
     sensores: {}
   };
@@ -708,6 +741,7 @@ setInterval(() => {
   const totalSens = dispositivos.reduce((acc, dev) => acc + Object.keys(dev.sensores || {}).length, 0);
   const totalBand = dispositivos.reduce((acc, dev) => acc + Object.keys(dev.bandejas || {}).length, 0);
   
+  marcarAtualizacao(new Date());
   logger.info(
     `STATUS GERAL | uptime=${uptime}s | memoria=${memoria}MB | dispositivos=${totalDev} | sensores=${totalSens} | bandejas=${totalBand} | mensagens=${estado.totalMensagens} | mqtt=${conexaoAtiva ? 'conectado' : 'desconectado'} | ultima_atualizacao=${estado.ultimaAtualizacao || 'nunca'}`
   );
@@ -721,7 +755,7 @@ process.on('SIGTERM', () => {
   if (conexaoAtiva) {
     client.publish('microverdes/status/aggregator', JSON.stringify({
       status: 'offline',
-      timestamp: new Date().toISOString()
+      timestamp: formatTimestamp(new Date())
     }), { retain: true });
   }
   
