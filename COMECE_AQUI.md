@@ -59,7 +59,7 @@ docker compose logs -f server
 ```bash
 cd server
 npm install
-MQTT_BROKER_URL=thingsboard-gateway-host MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
+MQTT_BROKER_URL=49.13.124.109 MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
 ```
 
 **Greenhouse:**
@@ -95,6 +95,8 @@ Bandejas: `A1` (Girassol), `B2` (Rabanete), `C1` (Ervilha), `D3` (Brócolis), `E
 | `GET /bandejas` | Lista bandejas |
 | `POST /cmd` | Enviar comando MQTT |
 | `GET /health` | Health check |
+
+> O servidor também publica telemetria automaticamente em `v1/devices/me/telemetry` a cada 3s, quando há dispositivos online.
 
 ## 🐳 Docker Compose
 

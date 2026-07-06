@@ -25,6 +25,8 @@ Toda a stack roda na VPS do Instituto Saúde Real na Hetzner, na Alemanha, com T
 - ✅ Fallback automático para simulação se servidor indisponível
 - ✅ Docker Compose para deploy local
 - ✅ Broker MQTT via ThingsBoard/Gateway-MQTT como padrão do projeto
+- ✅ Telemetria publicada no ThingsBoard CE a cada 3s quando há dispositivos online
+- ✅ Logs estruturados com timestamps ISO e níveis de severidade
 - ✅ Stack hospedada na VPS do Instituto Saúde Real na Hetzner, na Alemanha
 - ✅ ThingsBoard Edge integrado ao ThingsBoard CE em produção
 
@@ -56,7 +58,7 @@ Acessos:
 ```bash
 cd server
 npm install
-MQTT_BROKER_URL=<thingsboard-gateway-host> MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
+MQTT_BROKER_URL=49.13.124.109 MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
 ```
 
 **Greenhouse:**
@@ -112,7 +114,7 @@ Bandejas: `A1` (Girassol), `B2` (Rabanete), `C1` (Ervilha), `D3` (Brócolis), `E
 
 | Variável | Padrão | Descrição |
 |---|---|---|
-| `MQTT_BROKER_URL` | `thingsboard-gateway-host` | Host do broker MQTT do ThingsBoard |
+| `MQTT_BROKER_URL` | `49.13.124.109` | Host do broker MQTT do ThingsBoard (fixado por enquanto) |
 | `MQTT_BROKER_PORT` | `1883` | Porta TCP |
 | `PORT` | `3000` | Porta HTTP do servidor |
 
@@ -136,6 +138,7 @@ const char* WIFI_PASS = "12345678";
 | `/bandejas` | GET | Lista de bandejas com umidade |
 | `/cmd` | POST | Envia comando MQTT (`{"topico":"microverdes/cmd/irrigacao","valor":"ON"}`) |
 | `/health` | GET | Health check (`OK`) |
+| Telemetria | MQTT | Publicação automática em `v1/devices/me/telemetry` a cada 3s, quando há dispositivos online |
 
 ## 🐳 Docker Compose
 

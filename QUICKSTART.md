@@ -15,7 +15,7 @@ Acessos:
 **Server:**
 ```bash
 cd server && npm install
-MQTT_BROKER_URL=thingsboard-gateway-host node claude_mqtt_render_aggregator.js
+MQTT_BROKER_URL=49.13.124.109 MQTT_BROKER_PORT=1883 node claude_mqtt_render_aggregator.js
 ```
 
 **Greenhouse:**
@@ -25,9 +25,11 @@ cd greenhouse && npm install && npm run dev
 
 ## Broker MQTT
 
-- **Host:** ThingsBoard Gateway-MQTT
+- **Host:** ThingsBoard Gateway-MQTT (`49.13.124.109`)
 - **Porta:** 1883 (TCP)
 - **Autenticação:** usuário `QBlEQkAvzAALcjiCiyxI` e senha em branco
+- **Telemetria:** publicação automática em `v1/devices/me/telemetry` a cada 3s quando há dispositivos online
+- **Logs:** saída estruturada com timestamps ISO e níveis `[INFO]`, `[WARN]` e `[ERROR]`
 
 ## Tópicos
 

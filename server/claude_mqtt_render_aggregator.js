@@ -658,6 +658,47 @@ function obterDadosDashboard() {
 // Marca dispositivos sem heartbeat recente como offline
 setInterval(marcarDispositivosInativos, 15_000);// Intervalo reduzido de 60s → 15s
 
+// Publica telemetria de sensores no ThingsBoard a cada 3 segundos
+setInterval(() => {
+  const dispositivos = Object.values(estado.dispositivos).filter(d => d.online);
+  
+  if (dispositivos.length === 0 || !conexaoAtiva) {
+    return;
+  }
+  
+  // Reúne todos os sensores dos dispositivos ativos
+  const telemetria = {
+    timestamp: new Date().toISOString(),
+    dispositivos: dispositivos.length,
+    sensores: {}
+  };
+  
+  dispositivos.forEach(dispositivo => {
+    Object.entries(dispositivo.sensores || {}).forEach(([tipo, dados]) => {
+      if (!telemetria.sensores[tipo]) {
+        telemetria.sensores[tipo] = [];
+      }
+      telemetria.sensores[tipo].push({
+        dispositivo_id: dispositivo.id,
+        dispositivo_nome: dispositivo.nome,
+        valor: dados.valor,
+        unidade: dados.unidade,
+        timestamp: dados.timestamp
+      });
+    });
+  });
+  
+  // Publica na telemetria do ThingsBoard
+  const topicoThingsBoard = 'v1/devices/me/telemetry';
+  const payload = JSON.stringify(telemetria);
+  
+  client.publish(topicoThingsBoard, payload, { qos: 1 }, (err) => {
+    if (err) {
+      logger.error(`Falha ao publicar telemetria: ${err.message}`);
+    }
+  });
+}, 3000); // 3 segundos
+
 // Log de resumo a cada 2 minutos
 setInterval(() => {
   const uptime = Math.floor(process.uptime());
