@@ -49,8 +49,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      MQTT_BROKER_URL: ${MQTT_BROKER_URL:-thingsboard-gateway-host}
-      MQTT_BROKER_PORT: ${MQTT_BROKER_PORT:-1883}
+      MQTT_BROKER_URL: 49.13.124.109
+      MQTT_BROKER_PORT: 1883
     ports:
       - "3000:3000"
     networks:

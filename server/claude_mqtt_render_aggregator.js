@@ -24,6 +24,14 @@ require('dotenv').config();
 const mqtt = require('mqtt');
 const http = require('http');
 
+const now = () => new Date().toISOString();
+const logger = {
+  info: (...args) => console.log('[INFO]', now(), ...args),
+  warn: (...args) => console.warn('[WARN]', now(), ...args),
+  error: (...args) => console.error('[ERROR]', now(), ...args),
+  debug: (...args) => console.debug('[DEBUG]', now(), ...args)
+};
+
 // ==================== HTTP SERVER ====================
 const port = process.env.PORT || 3000;
 
@@ -103,13 +111,8 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`📡 Server HTTP rodando em http://localhost:${port}`);
-  console.log(`   Status:        http://localhost:${port}/status`);
-  console.log(`   Devices:       http://localhost:${port}/devices`);
-  console.log(`   Sensors:       http://localhost:${port}/sensors`);
-  console.log(`   Bandejas:      http://localhost:${port}/bandejas`);
-  console.log(`   Dashboard:     http://localhost:${port}/dashboard-data`);
-  console.log(`   Health:        http://localhost:${port}/health\n`);
+  logger.info(`Server HTTP rodando em http://localhost:${port}`);
+  logger.info(`Endpoints: /status, /devices, /sensors, /bandejas, /dashboard-data, /health`);
 });
 
 // ==================== ESTADO GLOBAL ====================
@@ -202,16 +205,8 @@ const MQTT_OPTIONS = {
 };
 
 // ==================== MQTT CONNECTION ====================
-console.log('╔══════════════════════════════════════════════════════╗');
-console.log('║  🌱 Saúde Real Microverdes — MQTT Aggregator        ║');
-console.log('║     (Compatível com arduino/microverdes.ino)        ║');
-console.log('╚══════════════════════════════════════════════════════╝\n');
-
-console.log(`📡 Configuração MQTT:`);
-console.log(`   Servidor: ${BROKER_URL}:${BROKER_PORT}`);
-console.log(`   Usuário: ${MQTT_USER}`);
-console.log(`   Senha: ${MQTT_PASS ? 'definida' : 'em branco'}`);
-console.log(`   Protocolo: mqtt (TCP)\n`);
+logger.info('Saúde Real Microverdes — MQTT Aggregator iniciado');
+logger.info(`Configuração MQTT: servidor=${BROKER_URL}:${BROKER_PORT}, usuário=${MQTT_USER}, senha=${MQTT_PASS ? '***' : '(em branco)'}, protocolo=mqtt`);
 
 const brokerUrl = `mqtt://${BROKER_URL}:${BROKER_PORT}`;
 const client = mqtt.connect(brokerUrl, MQTT_OPTIONS);
@@ -219,8 +214,8 @@ const client = mqtt.connect(brokerUrl, MQTT_OPTIONS);
 let conexaoAtiva = false;
 
 client.on('connect', () => {
-  console.log('✅ Conectado ao broker MQTT (TCP)!');
-  console.log(`   🔓 Conexão sem criptografia (porta 1883)\n`);
+  logger.info('Conectado ao broker MQTT (TCP)');
+  logger.info('Conexão sem criptografia na porta 1883');
   
   conexaoAtiva = true;
   
@@ -249,9 +244,7 @@ client.on('connect', () => {
   ];
   
   const sub = client.subscribe(topicos);
-  console.log('📡 Inscrito em:');
-  topicos.forEach(t => console.log(`   - ${t}`));
-  console.log();
+  logger.info('Inscrito em tópicos:', topicos.join(', '));
 });
 
 /**
@@ -438,11 +431,11 @@ client.on('message', (topic, message) => {
       estado.totalMensagens++;
       
       const tempo = timestamp.toLocaleTimeString('pt-BR');
-      console.log(`[${tempo}] 📊 ${deviceId.padEnd(16)} → ${sensorInfo.tipo.toUpperCase().padEnd(14)}: ${sensorInfo.valor}${sensorInfo.unidade}`);
+      logger.info(`[${tempo}] ${deviceId.padEnd(16)} → ${sensorInfo.tipo.toUpperCase().padEnd(14)}: ${sensorInfo.valor}${sensorInfo.unidade}`);
       return;
     }
   } catch (err) {
-    console.error(`[ERRO] Falha ao processar mensagem em "${topic}": ${err.message}`);
+    logger.error(`Falha ao processar mensagem em "${topic}": ${err.message}`);
   }
 });
 
@@ -461,21 +454,21 @@ function inferirUnidade(tipo) {
 }
 
 client.on('error', (err) => {
-  console.error('\n❌ Erro MQTT:', err.message);
+  logger.error(`Erro MQTT: ${err.message}`);
   conexaoAtiva = false;
 });
 
 client.on('disconnect', () => {
-  console.log('\n⚠️  Desconectado do broker MQTT');
+  logger.warn('Desconectado do broker MQTT');
   conexaoAtiva = false;
 });
 
 client.on('reconnect', () => {
-  console.log('🔄 Tentando reconectar...\n');
+  logger.info('Tentando reconectar ao broker MQTT');
 });
 
 client.on('offline', () => {
-  console.log('⚠️  Cliente MQTT offline');
+  logger.warn('Cliente MQTT offline');
   conexaoAtiva = false;
 });
 
@@ -674,20 +667,15 @@ setInterval(() => {
   const totalSens = dispositivos.reduce((acc, dev) => acc + Object.keys(dev.sensores || {}).length, 0);
   const totalBand = dispositivos.reduce((acc, dev) => acc + Object.keys(dev.bandejas || {}).length, 0);
   
-  console.log(`\n╔═══════════════════════════════════════════════════╗`);
-  console.log(`║            🌱  STATUS GERAL  🌱                  ║`);
-  console.log(`╚═══════════════════════════════════════════════════╝`);
-  console.log(`📊 Uptime: ${uptime}s | Memória: ${memoria}MB`);
-  console.log(`🔌 Dispositivos: ${totalDev} | Sensores: ${totalSens} | Bandejas: ${totalBand}`);
-  console.log(`💾 Mensagens recebidas: ${estado.totalMensagens}`);
-  console.log(`📡 MQTT: ${conexaoAtiva ? '🟢 Conectado' : '🔴 Desconectado'}`);
-  console.log(`🕐 Última atualização: ${estado.ultimaAtualizacao || 'nunca'}\n`);
+  logger.info(
+    `STATUS GERAL | uptime=${uptime}s | memoria=${memoria}MB | dispositivos=${totalDev} | sensores=${totalSens} | bandejas=${totalBand} | mensagens=${estado.totalMensagens} | mqtt=${conexaoAtiva ? 'conectado' : 'desconectado'} | ultima_atualizacao=${estado.ultimaAtualizacao || 'nunca'}`
+  );
 }, 120000); // 2 minutos
 
 // ==================== GRACEFUL SHUTDOWN ====================
 
 process.on('SIGTERM', () => {
-  console.log('\n📦 Recebido SIGTERM - encerrando gracefully...');
+  logger.info('Recebido SIGTERM - encerrando graceful shutdown');
   
   if (conexaoAtiva) {
     client.publish('microverdes/status/aggregator', JSON.stringify({
@@ -697,41 +685,41 @@ process.on('SIGTERM', () => {
   }
   
   client.end(false, () => {
-    console.log('✅ MQTT desconectado');
+    logger.info('MQTT desconectado');
   });
   
   server.close(() => {
-    console.log('✅ HTTP server fechado');
+    logger.info('HTTP server fechado');
     process.exit(0);
   });
   
   setTimeout(() => {
-    console.log('⚠️  Força saída após 10s');
+    logger.warn('Forçando saída após 10s');
     process.exit(1);
   }, 10000);
 });
 
 process.on('SIGINT', () => {
-  console.log('\n👋 Encerrando por SIGINT...');
+  logger.info('Recebido SIGINT - encerrando');
   process.emit('SIGTERM');
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('\n❌ Exceção não tratada:', err);
+  logger.error('Exceção não tratada:', err);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('\n❌ Promise rejection não tratada:', reason);
+  logger.error('Promise rejection não tratada:', reason);
 });
 
 // ==================== STARTUP ====================
-console.log('🌱 Saúde Real Microverdes IoT — VPS Hetzner');
-console.log('   Tópicos compatíveis: microverdes/sensor/*, microverdes/bandeja/*\n');
+logger.info('Saúde Real Microverdes IoT — VPS Hetzner');
+logger.info('Tópicos compatíveis: microverdes/sensor/*, microverdes/bandeja/*');
 
 setTimeout(() => {
   if (!conexaoAtiva) {
-    console.warn('\n⚠️  Aviso: RFID não conectou ao MQTT após 15s');
-    console.warn('   Verificar conectividade da rede\n');
+    logger.warn('Aviso: não foi possível conectar ao MQTT após 15s');
+    logger.warn('Verificar conectividade de rede');
   }
 }, 15000);
