@@ -1,0 +1,22 @@
+# Serviço pra adicionar à stack existente no Portainer (mesma rede do n8n/Postgres).
+# Rede confirmada via `docker inspect postgres`: stack_stack
+
+services:
+  davini-dashboard:
+    build: .
+    container_name: davini-dashboard
+    restart: unless-stopped
+    environment:
+      # container do Postgres confirmado: "postgres"
+      DATABASE_URL: postgresql://usuario:senha@postgres:5432/nome_do_banco
+      AUTH_USER: michele
+      AUTH_PASSWORD: troque-esta-senha
+      SESSION_SECRET: troque-por-um-valor-aleatorio-longo
+    networks:
+      - stack_stack
+    # Não precisa publicar porta pro host — o Cloudflare Tunnel acessa pelo nome
+    # do serviço dentro da rede Docker, igual já deve fazer com o n8n.
+
+networks:
+  stack_stack:
+    external: true

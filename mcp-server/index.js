@@ -148,6 +148,7 @@ async function handleCallTool(name, args) {
       return await apiGet("/health");
 
     case "status_completo":
+      // Informação unificada (iu): retorna o status completo com informações resumidas e detalhadas
       return await apiGet("/status");
 
     case "listar_dispositivos":

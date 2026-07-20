@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+:root {
+  /* Base */
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-ink: #1b2430;
+  --color-ink-muted: #5b6472;
+  --color-ink-faint: #8a92a0;
+  --color-border: #e2e5e9;
+  --color-border-strong: #cdd2d9;
+
+  /* Accent — teal, nod to thyroid-awareness color given the clinic's endocrinologia/tireoide focus */
+  --color-accent: #2f6f62;
+  --color-accent-ink: #1f4b41;
+  --color-accent-soft: #e6f0ee;
+
+  /* Categorical tags */
+  --color-novo: #b8863b;
+  --color-novo-soft: #f6efe1;
+  --color-retorno: #2f6f62;
+  --color-retorno-soft: #e6f0ee;
+  --color-indefinido: #8a92a0;
+  --color-indefinido-soft: #eef0f2;
+
+  /* Semantic */
+  --color-alert: #c1483b;
+  --color-alert-soft: #fbeae8;
+  --color-alert-ink: #7c2e25;
+  --color-positive: #52785a;
+  --color-positive-soft: #eef3ee;
+}
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-ink: var(--color-ink);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-ink-faint: var(--color-ink-faint);
+  --color-border: var(--color-border);
+  --color-border-strong: var(--color-border-strong);
+  --color-accent: var(--color-accent);
+  --color-accent-ink: var(--color-accent-ink);
+  --color-accent-soft: var(--color-accent-soft);
+  --color-novo: var(--color-novo);
+  --color-novo-soft: var(--color-novo-soft);
+  --color-retorno: var(--color-retorno);
+  --color-retorno-soft: var(--color-retorno-soft);
+  --color-indefinido: var(--color-indefinido);
+  --color-indefinido-soft: var(--color-indefinido-soft);
+  --color-alert: var(--color-alert);
+  --color-alert-soft: var(--color-alert-soft);
+  --color-alert-ink: var(--color-alert-ink);
+  --color-positive: var(--color-positive);
+  --color-positive-soft: var(--color-positive-soft);
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-plex-mono);
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
