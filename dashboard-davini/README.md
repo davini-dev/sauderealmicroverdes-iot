@@ -36,6 +36,21 @@ Ver `.env.example`. Resumo:
 | `DATABASE_URL` | connection string do Postgres onde estão as tabelas |
 | `AUTH_USER` / `AUTH_PASSWORD` | login fixo do painel |
 | `SESSION_SECRET` | segredo pra assinar o cookie de sessão — gere com `openssl rand -base64 32` |
+| `N8N_DASHBOARD_WEBHOOK_URL` | URL do webhook "Dashboard - Enviar Mensagem" no n8n |
+| `N8N_DASHBOARD_WEBHOOK_SECRET` | segredo que o webhook exige no header `x-dashboard-secret` (já vem preenchido no `docker-compose.example.yml`, igual ao que está no node "Validar Secret" do workflow) |
+
+## Funcionalidades
+
+- **Clique nos "Urgentes"** do alerta já filtra a tabela por urgência
+- **Histórico / Chat**: aba Histórico mostra o resumo da conversa; aba Chat mostra a
+  troca de mensagens (bot + Michele) e permite responder o paciente direto pelo
+  WhatsApp — sem precisar digitar `#humano`, o próprio envio já ativa o modo humano
+  por 2h no Redis
+- **Confirmar Consulta**: filtro dedicado + checkbox "ProntMed" (aparece quando a
+  consulta está confirmada) pra Michele marcar se já lançou no ProntMed
+- **Atendimentos por dia**: número exibido em cima de cada barra
+- **Finalizado/Não finalizado**: combobox por atendimento — quando finalizado, a
+  linha aparece riscada na tabela
 
 ## Deploy no seu Hetzner (Docker/Portainer)
 

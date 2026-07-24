@@ -1,6 +1,6 @@
 import type { Stats } from "@/lib/types";
 
-export function AlertStrip({ stats }: { stats: Stats }) {
+export function AlertStrip({ stats, onFilterUrgentes }: { stats: Stats; onFilterUrgentes: () => void }) {
   const urgentes = stats.breakdown?.urgencia?.urgente ?? 0;
   const precisaAtencao = stats.precisa_atencao;
 
@@ -31,12 +31,18 @@ export function AlertStrip({ stats }: { stats: Stats }) {
           </p>
         </div>
         {urgentes > 0 && (
-          <div className="text-right">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-alert-ink/70 mb-1">
+          <button
+            onClick={onFilterUrgentes}
+            className="text-right group cursor-pointer"
+            title="Filtrar só os urgentes"
+          >
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-alert-ink/70 mb-1 group-hover:text-alert-ink transition-colors">
               Urgentes
             </p>
-            <p className="font-display text-3xl text-alert-ink tabular-nums">{urgentes}</p>
-          </div>
+            <p className="font-display text-3xl text-alert-ink tabular-nums underline decoration-alert/30 decoration-2 underline-offset-4 group-hover:decoration-alert-ink transition-colors">
+              {urgentes}
+            </p>
+          </button>
         )}
       </div>
     </div>

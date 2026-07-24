@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
   const urgencia = sp.get("urgencia") || null;
   const interesseParam = sp.get("interesse");
   const interesse = interesseParam === "true" ? true : interesseParam === "false" ? false : null;
+  const consultaConfirmada = interesseParam === "confirmado" ? true : null;
   const q = sp.get("q") || null;
   const page = Math.max(1, parseInt(sp.get("page") || "1", 10) || 1);
   const pageSize = Math.min(100, Math.max(1, parseInt(sp.get("pageSize") || "25", 10) || 25));
@@ -21,6 +22,7 @@ export async function GET(request: NextRequest) {
     const result = await pool.query(
       `SELECT a.id, a.numero, a.nome_paciente, a.tipo_paciente, a.tipo_pagamento,
               a.convenio_nome, a.motivo, a.urgencia, a.interesse_agendamento,
+              a.consulta_confirmada, a.prontmed_confirmado, a.status_atendimento,
               a.resumo_conversa, a.origem, a.data_referencia, a.criado_em, a.atualizado_em,
               COALESCE(c.total_comentarios, 0)::int AS total_comentarios,
               COUNT(*) OVER()::int AS total_count
@@ -38,9 +40,10 @@ export async function GET(request: NextRequest) {
          AND ($6::text IS NULL OR a.urgencia = $6)
          AND ($7::boolean IS NULL OR a.interesse_agendamento = $7)
          AND ($8::text IS NULL OR a.nome_paciente ILIKE '%' || $8 || '%' OR a.numero ILIKE '%' || $8 || '%')
+         AND ($9::boolean IS NULL OR a.consulta_confirmada = $9)
        ORDER BY a.atualizado_em DESC
-       LIMIT $9 OFFSET $10`,
-      [dataInicio, dataFim, tipoPaciente, tipoPagamento, motivo, urgencia, interesse, q, pageSize, offset]
+       LIMIT $10 OFFSET $11`,
+      [dataInicio, dataFim, tipoPaciente, tipoPagamento, motivo, urgencia, interesse, q, consultaConfirmada, pageSize, offset]
     );
 
     const totalCount = result.rows[0]?.total_count ?? 0;

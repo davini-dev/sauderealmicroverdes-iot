@@ -61,11 +61,12 @@ export default function DashboardPage() {
     return `/api/atendimentos?${params.toString()}`;
   }, [dataInicio, dataFim, filtros, page]);
 
-  const { data: atendimentosResp, error: atendimentosError, isLoading } = useSWR<AtendimentosResponse>(
-    atendimentosUrl,
-    fetcher,
-    { refreshInterval: POLL_MS, keepPreviousData: true }
-  );
+  const {
+    data: atendimentosResp,
+    error: atendimentosError,
+    isLoading,
+    mutate: mutateAtendimentos,
+  } = useSWR<AtendimentosResponse>(atendimentosUrl, fetcher, { refreshInterval: POLL_MS, keepPreviousData: true });
 
   function handlePeriodo(inicio: string, fim: string) {
     setDataInicio(inicio);
@@ -94,7 +95,9 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {stats && <AlertStrip stats={stats} />}
+        {stats && (
+          <AlertStrip stats={stats} onFilterUrgentes={() => handleFiltros({ ...filtros, urgencia: "urgente" })} />
+        )}
 
         {stats && (
           <div className="grid grid-cols-1 xl:grid-cols-4 gap-3 items-stretch">
@@ -109,7 +112,11 @@ export default function DashboardPage() {
           <FilterBar filtros={filtros} onChange={handleFiltros} />
         </div>
 
-        <AtendimentosTable atendimentos={atendimentosResp?.data ?? []} loading={isLoading} />
+        <AtendimentosTable
+          atendimentos={atendimentosResp?.data ?? []}
+          loading={isLoading}
+          onAtendimentoChanged={() => mutateAtendimentos()}
+        />
 
         {atendimentosResp && atendimentosResp.totalPages > 1 && (
           <div className="flex items-center justify-center gap-3 text-sm">

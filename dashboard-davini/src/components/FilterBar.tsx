@@ -86,6 +86,7 @@ export function FilterBar({
         options={[
           ["true", "Quer agendar"],
           ["false", "Sem interesse"],
+          ["confirmado", "Confirmar Consulta"],
         ]}
         placeholder="Interesse"
       />

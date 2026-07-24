@@ -25,6 +25,11 @@ export const URGENCIA_LABEL: Record<string, string> = {
   urgente: "Urgente",
 };
 
+export const STATUS_ATENDIMENTO_LABEL: Record<string, string> = {
+  nao_finalizado: "Não finalizado",
+  finalizado: "Finalizado",
+};
+
 // classes Tailwind (texto + fundo) por categoria — usa os tokens definidos em globals.css
 export const TIPO_PACIENTE_STYLE: Record<string, string> = {
   novo: "text-novo bg-novo-soft",

@@ -1,6 +1,7 @@
 export type TipoPaciente = "novo" | "retorno" | "indefinido";
 export type TipoPagamento = "convenio" | "particular" | "nao_informado";
 export type Urgencia = "normal" | "urgente";
+export type StatusAtendimento = "nao_finalizado" | "finalizado";
 
 export type Atendimento = {
   id: number;
@@ -12,6 +13,9 @@ export type Atendimento = {
   motivo: string;
   urgencia: Urgencia;
   interesse_agendamento: boolean;
+  consulta_confirmada: boolean;
+  prontmed_confirmado: boolean;
+  status_atendimento: StatusAtendimento;
   resumo_conversa: string | null;
   origem: string;
   data_referencia: string;
@@ -33,6 +37,16 @@ export type Comentario = {
   atendimento_id: number;
   autor: string;
   comentario: string;
+  criado_em: string;
+};
+
+export type Mensagem = {
+  id: number;
+  numero: string;
+  direcao: "recebida" | "enviada";
+  autor: string | null;
+  mensagem: string;
+  origem: "bot" | "michele";
   criado_em: string;
 };
 

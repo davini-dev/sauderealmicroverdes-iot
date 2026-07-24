@@ -12,6 +12,11 @@ services:
       AUTH_USER: michele
       AUTH_PASSWORD: troque-esta-senha
       SESSION_SECRET: troque-por-um-valor-aleatorio-longo
+      # Webhook "Dashboard - Enviar Mensagem" no n8n — usado pela aba Chat.
+      # Se o n8n está na mesma rede Docker, dá pra usar o hostname interno do
+      # serviço do n8n em vez do domínio público (mais rápido, não sai pra internet).
+      N8N_DASHBOARD_WEBHOOK_URL: https://n8n.sauderealmicroverdes.club/webhook/dashboard-enviar-mensagem
+      N8N_DASHBOARD_WEBHOOK_SECRET: 3f10675256a4e8d1f64117d01c08782363790097fae3d54d
     networks:
       - stack_stack
     # Não precisa publicar porta pro host — o Cloudflare Tunnel acessa pelo nome
