@@ -1,3 +1,5 @@
 # Wokwi ESP32 Microverdes - Dependências para PlatformIO/Wokwi
 PubSubClient
 ArduinoJson
+DHT sensor library
+Adafruit Unified Sensor

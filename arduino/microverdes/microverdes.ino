@@ -16,6 +16,7 @@
 //    TFT_eSPI     (Bodmer)
 //    PubSubClient (Nick O'Leary)
 //    ArduinoJson  (Benoit Blanchon)
+//    DHT sensor   (Adafruit)
 //    Preferences  (built-in ESP32)
 //
 //  BOARD: ESP32S3 Dev Module
@@ -29,6 +30,7 @@
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <Preferences.h>
+#include <DHT.h>
 
 // ── Forward declarations (evita 'not declared in this scope') ─
 struct SensorSim { float valor, minVal, maxVal, delta, tend; };
@@ -36,6 +38,7 @@ struct Bandeja    { const char* id; const char* nome; float u; float d; };
 struct Pub        { char t[48]; char v[16]; char h[10]; };
 
 void mqttCallback(char* topic, byte* payload, unsigned int length);
+bool atualizarDht22();
 
 // ── MQTT Credentials ──────────────────────────────────────────
 const char* MQTT_USER = "QBlEQkAvzAALcjiCiyxI";
@@ -57,6 +60,15 @@ const char* MQTT_PASS = "";
 TFT_eSPI tft = TFT_eSPI();
 #define TFT_W   320
 #define TFT_H   170
+
+// ── DHT22 ─────────────────────────────────────────────────────
+#define DHT_PIN  13
+#define DHT_TYPE  DHT22
+DHT dht(DHT_PIN, DHT_TYPE);
+float dhtTempAtual = 27.0;
+float dhtUmidAtual  = 75.0;
+bool  dhtTemLeitura = false;
+unsigned long lastDhtRead = 0;
 
 // Paleta RGB565
 #define C_BG       0x0841
@@ -232,10 +244,20 @@ void pub(const char* t, const char* v, bool r = true) {
 
 void publicarSensores() {
   char buf[16];
-  float temp = simPasso(simTemp);
-  float ar   = simPasso(simAr);
+  float temp = dhtTempAtual;
+  float ar   = dhtUmidAtual;
   float lux  = simPasso(simLuz);
   float solo = simPasso(simSolo);
+
+  if (atualizarDht22()) {
+    temp = dhtTempAtual;
+    ar   = dhtUmidAtual;
+  } else if (!dhtTemLeitura) {
+    // Se o DHT22 ainda nao respondeu, mantemos a telemetria viva com fallback.
+    temp = simPasso(simTemp);
+    ar   = simPasso(simAr);
+  }
+
   dtostrf(temp, 5, 1, buf); pub(T_TEMP,    buf);
   dtostrf(ar,   5, 1, buf); pub(T_AR,      buf);
   dtostrf(lux,  6, 0, buf); pub(T_LUZ,     buf);
@@ -280,6 +302,24 @@ void publicarDevice() {
   char payload[256];
   serializeJson(doc, payload);
   pub(T_DEVICE, payload);
+}
+
+bool atualizarDht22() {
+  const unsigned long DHT_READ_MS = 2500;
+  if (millis() - lastDhtRead < DHT_READ_MS) return dhtTemLeitura;
+  lastDhtRead = millis();
+
+  float temp = dht.readTemperature();
+  float umid = dht.readHumidity();
+  if (isnan(temp) || isnan(umid)) {
+    Serial.println("[DHT22] leitura falhou");
+    return false;
+  }
+
+  dhtTempAtual = temp;
+  dhtUmidAtual  = umid;
+  dhtTemLeitura = true;
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1117,6 +1157,7 @@ void setup() {
 
   pinMode(BTN0, INPUT_PULLUP);
   pinMode(BTN1, INPUT_PULLUP);
+  dht.begin();
 
   tft.init();
   tft.setRotation(1);
