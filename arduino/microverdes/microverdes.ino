@@ -138,13 +138,9 @@ int wifiScanAttempts = 0;
 #define MAX_SCAN_ATTEMPTS 3
 
 // ── Topicos MQTT ──────────────────────────────────────────────
-#define T_TEMP      "microverdes/sensor/temp"
-#define T_AR        "microverdes/sensor/ar"
-#define T_LUZ       "microverdes/sensor/luz"
-#define T_UMIDADE   "microverdes/sensor/umidade"
+#define TB_TELEMETRY "v1/devices/me/telemetry"
 #define T_NEBLINA   "microverdes/status/neblina"
 #define T_IRR       "microverdes/cmd/irrigacao"
-#define T_DEVICE    "microverdes/device/info"
 #define T_BANDEJA   "microverdes/bandeja/"
 
 // ── Intervalos ────────────────────────────────────────────────
@@ -237,13 +233,17 @@ void regPub(const char* t, const char* v) {
   if (pubCount < 3) pubCount++;
 }
 
+void pubTb(const char* resumo, const char* payload) {
+  mqttClient.publish(TB_TELEMETRY, payload, false);
+  regPub("thingsboard/telemetry", resumo);
+}
+
 void pub(const char* t, const char* v, bool r = true) {
   mqttClient.publish(t, v, r);
   regPub(t, v);
 }
 
 void publicarSensores() {
-  char buf[16];
   float temp = dhtTempAtual;
   float ar   = dhtUmidAtual;
   float lux  = simPasso(simLuz);
@@ -258,31 +258,37 @@ void publicarSensores() {
     ar   = simPasso(simAr);
   }
 
-  dtostrf(temp, 5, 1, buf); pub(T_TEMP,    buf);
-  dtostrf(ar,   5, 1, buf); pub(T_AR,      buf);
-  dtostrf(lux,  6, 0, buf); pub(T_LUZ,     buf);
-  dtostrf(solo, 5, 1, buf); pub(T_UMIDADE, buf);
-  pub(T_IRR,     irrigacaoOn ? "ON" : "OFF");
-  pub(T_NEBLINA, neblinaOn   ? "ON" : "OFF");
+  StaticJsonDocument<192> doc;
+  doc["temperatura"]  = temp;
+  doc["umidade_ar"]   = ar;
+  doc["luminosidade"]  = lux;
+  doc["umidade_solo"] = solo;
+  doc["irrigacao"]    = irrigacaoOn ? "ON" : "OFF";
+  doc["neblina"]      = neblinaOn ? "ON" : "OFF";
+  char payload[192];
+  char resumo[96];
+  snprintf(resumo, sizeof(resumo), "T=%.1f U=%.1f L=%.0f S=%.1f",
+           temp, ar, lux, solo);
+  serializeJson(doc, payload);
+  pubTb(resumo, payload);
 }
 
 void publicarBandejas() {
-  StaticJsonDocument<128> doc;
-  char topico[48], payload[128];
+  StaticJsonDocument<256> doc;
+  char resumo[96];
+  resumo[0] = '\0';
   for (int i = 0; i < 5; i++) {
     float u = simBandeja(bandejas[i]);
-    doc.clear();
-    doc["nome"]    = bandejas[i].nome;
-    doc["umidade"] = (int)round(u);
-    serializeJson(doc, payload);
-    snprintf(topico, sizeof(topico), "%s%s", T_BANDEJA, bandejas[i].id);
-    mqttClient.publish(topico, payload, true);
+    char key[16];
+    snprintf(key, sizeof(key), "bandeja_%s", bandejas[i].id);
+    doc[key] = round(u);
+    char trecho[20];
+    snprintf(trecho, sizeof(trecho), "%s=%.0f ", bandejas[i].id, round(u));
+    strncat(resumo, trecho, sizeof(resumo) - strlen(resumo) - 1);
   }
-  char v[8];
-  snprintf(v, sizeof(v), "%d%%", (int)round(bandejas[4].u));
-  char t2[48];
-  snprintf(t2, sizeof(t2), "%s%s", T_BANDEJA, bandejas[4].id);
-  regPub(t2, v);
+  char payload[256];
+  serializeJson(doc, payload);
+  pubTb(resumo, payload);
 }
 
 void publicarDevice() {
@@ -298,10 +304,12 @@ void publicarDevice() {
   snprintf(up, sizeof(up), "%02luh%02lum%02lus", h, m, s);
   doc["uptime"]    = up;
   doc["heap_free"] = ESP.getFreeHeap();
-  doc["modo"]      = "simulacao";
+  doc["modo"]      = "thingsboard-nativo";
   char payload[256];
+  char resumo[80];
+  snprintf(resumo, sizeof(resumo), "%s %s", cfgDevName, WiFi.localIP().toString().c_str());
   serializeJson(doc, payload);
-  pub(T_DEVICE, payload);
+  pubTb(resumo, payload);
 }
 
 bool atualizarDht22() {
