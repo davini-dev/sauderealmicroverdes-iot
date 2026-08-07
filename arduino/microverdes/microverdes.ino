@@ -69,6 +69,7 @@ DHT dht(DHT_PIN, DHT_TYPE);
 float dhtTempAtual = 27.0;
 float dhtUmidAtual  = 75.0;
 bool  dhtTemLeitura = false;
+bool  dhtLeituraNova = false;
 unsigned long lastDhtRead = 0;
 
 // Paleta RGB565
@@ -269,15 +270,21 @@ void publicarSensores() {
   float ar   = dhtUmidAtual;
   float lux  = simPasso(simLuz);
   float solo = simPasso(simSolo);
+  const char* origemDht = "cache";
 
   if (atualizarDht22()) {
     temp = dhtTempAtual;
     ar   = dhtUmidAtual;
+    origemDht = dhtLeituraNova ? "nova" : "reaproveitada";
   } else if (!dhtTemLeitura) {
     // Se o DHT22 ainda nao respondeu, mantemos a telemetria viva com fallback.
     temp = simPasso(simTemp);
     ar   = simPasso(simAr);
+    origemDht = "simulacao";
   }
+
+  Serial.printf("[DHT22] publicando (%s): temp=%.1fC umid=%.1f%%\n",
+                origemDht, temp, ar);
 
   StaticJsonDocument<192> doc;
   doc["temperatura"]  = temp;
@@ -336,19 +343,27 @@ void publicarDevice() {
 
 bool atualizarDht22() {
   const unsigned long DHT_READ_MS = 2500;
-  if (millis() - lastDhtRead < DHT_READ_MS) return dhtTemLeitura;
+  if (millis() - lastDhtRead < DHT_READ_MS) {
+    dhtLeituraNova = false;
+    Serial.printf("[DHT22] leitura reaproveitada: temp=%.1fC umid=%.1f%%\n",
+                  dhtTempAtual, dhtUmidAtual);
+    return dhtTemLeitura;
+  }
   lastDhtRead = millis();
 
   float temp = dht.readTemperature();
   float umid = dht.readHumidity();
   if (isnan(temp) || isnan(umid)) {
-    Serial.println("[DHT22] leitura falhou");
+    dhtLeituraNova = false;
+    Serial.println("[DHT22] leitura falhou (temp/umid invalidos)");
     return false;
   }
 
   dhtTempAtual = temp;
   dhtUmidAtual  = umid;
   dhtTemLeitura = true;
+  dhtLeituraNova = true;
+  Serial.printf("[DHT22] leitura nova: temp=%.1fC umid=%.1f%%\n", temp, umid);
   return true;
 }
 
