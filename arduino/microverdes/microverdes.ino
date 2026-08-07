@@ -41,7 +41,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length);
 bool atualizarDht22();
 
 // ── MQTT Credentials ──────────────────────────────────────────
-const char* MQTT_USER = "QBlEQkAvzAALcjiCiyxI";
+const char* MQTT_USER = "vDiaTbIzinPbEMtSal4P";
 const char* MQTT_PASS = "";
 
 // ── Botoes fisicos ────────────────────────────────────────────
