@@ -31,6 +31,7 @@
 #include <SPI.h>
 #include <Preferences.h>
 #include <DHT.h>
+#include <time.h>
 
 // ── Forward declarations (evita 'not declared in this scope') ─
 struct SensorSim { float valor, minVal, maxVal, delta, tend; };
@@ -107,6 +108,7 @@ bool mqttConectado  = false;
 bool wifiConectado  = false;
 bool erroWifiPendente = false;
 bool erroMqttPendente = false;
+bool horarioConfigurado = false;
 unsigned long lastWifiRetry = 0;
 unsigned long lastMqttRetry = 0;
 unsigned long startMs = 0;
@@ -119,6 +121,13 @@ int  modo = 0;
 #define MQTT_MAX_TENTATIVAS 8
 #define MQTT_SOCKET_TIMEOUT 20
 #define TCP_SOCKET_TIMEOUT  20
+#define TZ_SAO_PAULO "BRT3"
+
+const char* NTP_SERVERS[] = {
+  "pool.ntp.org",
+  "time.google.com",
+  "time.nist.gov",
+};
 
 // ── Provisioning states ───────────────────────────────────────
 #define PROV_WIFI_SELECT 0
@@ -225,12 +234,23 @@ float simBandeja(Bandeja &b) {
 void regPub(const char* t, const char* v) {
   ultimas[0] = ultimas[1];
   ultimas[1] = ultimas[2];
-  unsigned long s = (millis()-startMs)/1000, m = s/60, h = m/60;
-  s%=60; m%=60; h%=24;
   snprintf(ultimas[2].t, sizeof(ultimas[2].t), "%s", t);
   snprintf(ultimas[2].v, sizeof(ultimas[2].v), "%s", v);
-  snprintf(ultimas[2].h, sizeof(ultimas[2].h), "%02lu:%02lu:%02lu", h, m, s);
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo, 50)) {
+    strftime(ultimas[2].h, sizeof(ultimas[2].h), "%H:%M:%S", &timeinfo);
+  } else {
+    snprintf(ultimas[2].h, sizeof(ultimas[2].h), "--:--:--");
+  }
   if (pubCount < 3) pubCount++;
+}
+
+void configurarHorarioSaoPaulo() {
+  if (horarioConfigurado) return;
+  setenv("TZ", TZ_SAO_PAULO, 1);
+  tzset();
+  configTime(0, 0, NTP_SERVERS[0], NTP_SERVERS[1], NTP_SERVERS[2]);
+  horarioConfigurado = true;
 }
 
 void pubTb(const char* resumo, const char* payload) {
@@ -671,35 +691,23 @@ void desenharMonitor() {
   tft.setTextDatum(ML_DATUM);
   tft.setTextSize(1);
   tft.drawString("sauderealmicroverdes.club", 6, 12);
-  uint16_t cm = mqttConectado ? C_GREEN : C_RED;
-  tft.fillCircle(TFT_W-62, 12, 4, cm);
-  tft.setTextColor(cm, C_HEADER);
-  tft.setTextDatum(ML_DATUM);
-  tft.drawString(mqttConectado ? "MQTT ON" : "MQTT OFF", TFT_W-54, 12);
 
   // linhas de info
   int y = 32;
   int lh = 17;
-
-  tft.setTextColor(C_GRAY,  C_BG); tft.setTextDatum(ML_DATUM); tft.drawString("IP local :", 6, y);
-  tft.setTextColor(C_WHITE, C_BG); tft.drawString(wifiConectado ? WiFi.localIP().toString().c_str() : "...", 84, y);
-  y += lh;
-
-  tft.setTextColor(C_GRAY,  C_BG); tft.drawString("WiFi     :", 6, y);
-  tft.setTextColor(C_LGRAY, C_BG); tft.drawString(cfgWifiSsid, 84, y);
-  y += lh;
-
-  tft.setTextColor(C_GRAY,  C_BG); tft.drawString("Broker   :", 6, y);
-  tft.setTextColor(C_LGRAY, C_BG); tft.drawString(cfgBroker, 84, y);
-  y += lh;
 
   unsigned long ms = millis()-startMs;
   unsigned long s  = ms/1000, m = s/60, h = m/60;
   s%=60; m%=60; h%=24;
   char up[20];
   snprintf(up, sizeof(up), "%02luh %02lum %02lus", h, m, s);
-  tft.setTextColor(C_GRAY,  C_BG); tft.drawString("Uptime   :", 6, y);
+
+  tft.setTextColor(C_GRAY,  C_BG); tft.setTextDatum(ML_DATUM); tft.drawString("Uptime   :", 6, y);
   tft.setTextColor(C_AMBER, C_BG); tft.drawString(up, 84, y);
+  y += lh;
+
+  tft.setTextColor(C_GRAY,  C_BG); tft.drawString("IP local :", 6, y);
+  tft.setTextColor(C_WHITE, C_BG); tft.drawString(wifiConectado ? WiFi.localIP().toString().c_str() : "...", 84, y);
   y += lh;
 
   tft.setTextColor(C_GRAY,    C_BG); tft.drawString("Device   :", 6, y);
@@ -712,38 +720,38 @@ void desenharMonitor() {
   y += 5;
   tft.setTextColor(C_GRAY, C_BG);
   tft.drawString("Ultimas publicacoes:", 6, y);
-  y += 13;
+  y += 11;
 
   // header tabela
-  tft.fillRect(0, y, TFT_W, 13, C_DIVIDER);
+  tft.fillRect(0, y, TFT_W, 11, C_DIVIDER);
   tft.setTextColor(C_LGRAY, C_DIVIDER);
-  tft.setTextDatum(ML_DATUM); tft.drawString("Topico", 6, y+6);
+  tft.setTextDatum(ML_DATUM); tft.drawString("Topico", 6, y+5);
   tft.setTextDatum(MR_DATUM);
-  tft.drawString("Valor", 240, y+6);
-  tft.drawString("Hora", TFT_W-4, y+6);
-  y += 13;
+  tft.drawString("Valor", 236, y+5);
+  tft.drawString("Hora", TFT_W-4, y+5);
+  y += 11;
 
   // linhas da tabela
   int vis = min(pubCount, 3);
   int ini = 3 - vis;
   for (int i = 0; i < 3; i++) {
     uint16_t cRow = (i % 2 == 0) ? C_ROW_EVEN : C_ROW_ODD;
-    tft.fillRect(0, y, TFT_W, 16, cRow);
+    tft.fillRect(0, y, TFT_W, 14, cRow);
     if (i < vis) {
       int idx = ini + i;
       String top = String(ultimas[idx].t);
       top.replace("microverdes/", "");
       tft.setTextColor(C_WHITE, cRow); tft.setTextDatum(ML_DATUM);
-      tft.drawString(top.substring(0, 22), 6, y+8);
+      tft.drawString(top.substring(0, 18), 6, y+7);
       tft.setTextColor(C_GREEN, cRow); tft.setTextDatum(MR_DATUM);
-      tft.drawString(ultimas[idx].v, 240, y+8);
+      tft.drawString(ultimas[idx].v, 236, y+7);
       tft.setTextColor(C_GRAY,  cRow);
-      tft.drawString(ultimas[idx].h, TFT_W-4, y+8);
+      tft.drawString(ultimas[idx].h, TFT_W-4, y+7);
     } else {
       tft.setTextColor(C_DIVIDER, cRow); tft.setTextDatum(ML_DATUM);
-      tft.drawString("---", 6, y+8);
+      tft.drawString("---", 6, y+7);
     }
-    y += 16;
+    y += 14;
   }
 }
 
@@ -932,6 +940,7 @@ bool conectarWifi() {
   wifiConectado = (WiFi.status() == WL_CONNECTED);
   if (wifiConectado) {
     Serial.printf("[WiFi] OK %s RSSI %d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    configurarHorarioSaoPaulo();
     tft.fillScreen(C_BG);
     tft.setTextColor(C_GREEN, C_BG);
     tft.drawString("WiFi conectado!", TFT_W/2, TFT_H/2 - 10);
