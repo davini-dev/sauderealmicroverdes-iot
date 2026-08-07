@@ -148,6 +148,7 @@ int wifiScanAttempts = 0;
 
 // ── Topicos MQTT ──────────────────────────────────────────────
 #define TB_TELEMETRY "v1/devices/me/telemetry"
+#define T_DEVICE     "microverdes/device/info"
 #define T_NEBLINA   "microverdes/status/neblina"
 #define T_IRR       "microverdes/cmd/irrigacao"
 #define T_BANDEJA   "microverdes/bandeja/"
@@ -294,21 +295,22 @@ void publicarSensores() {
 }
 
 void publicarBandejas() {
-  StaticJsonDocument<256> doc;
-  char resumo[96];
-  resumo[0] = '\0';
+  StaticJsonDocument<128> doc;
+  char topico[48], payload[128];
   for (int i = 0; i < 5; i++) {
     float u = simBandeja(bandejas[i]);
-    char key[16];
-    snprintf(key, sizeof(key), "bandeja_%s", bandejas[i].id);
-    doc[key] = round(u);
-    char trecho[20];
-    snprintf(trecho, sizeof(trecho), "%s=%.0f ", bandejas[i].id, round(u));
-    strncat(resumo, trecho, sizeof(resumo) - strlen(resumo) - 1);
+    doc.clear();
+    doc["nome"]    = bandejas[i].nome;
+    doc["umidade"] = (int)round(u);
+    serializeJson(doc, payload);
+    snprintf(topico, sizeof(topico), "%s%s", T_BANDEJA, bandejas[i].id);
+    mqttClient.publish(topico, payload, true);
   }
-  char payload[256];
-  serializeJson(doc, payload);
-  pubTb(resumo, payload);
+  char v[8];
+  snprintf(v, sizeof(v), "%d%%", (int)round(bandejas[4].u));
+  char t2[48];
+  snprintf(t2, sizeof(t2), "%s%s", T_BANDEJA, bandejas[4].id);
+  regPub(t2, v);
 }
 
 void publicarDevice() {
@@ -324,12 +326,12 @@ void publicarDevice() {
   snprintf(up, sizeof(up), "%02luh%02lum%02lus", h, m, s);
   doc["uptime"]    = up;
   doc["heap_free"] = ESP.getFreeHeap();
-  doc["modo"]      = "thingsboard-nativo";
+  doc["modo"]      = "simulacao";
   char payload[256];
   char resumo[80];
   snprintf(resumo, sizeof(resumo), "%s %s", cfgDevName, WiFi.localIP().toString().c_str());
   serializeJson(doc, payload);
-  pubTb(resumo, payload);
+  pub(T_DEVICE, payload);
 }
 
 bool atualizarDht22() {
