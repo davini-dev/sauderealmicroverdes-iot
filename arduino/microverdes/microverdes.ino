@@ -32,7 +32,6 @@
 #include <Preferences.h>
 #include <DHT.h>
 #include <time.h>
-#include <sys/time.h>
 
 // ── Forward declarations (evita 'not declared in this scope') ─
 struct SensorSim { float valor, minVal, maxVal, delta, tend; };
@@ -41,8 +40,6 @@ struct Pub        { char t[48]; char v[16]; char h[10]; };
 
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 bool atualizarDht22();
-uint64_t timestampThingsBoard();
-bool horarioValido();
 
 // ── MQTT Credentials ──────────────────────────────────────────
 const char* MQTT_USER = "Qs2LcyJNQLuGSTHpMSrw";
@@ -254,15 +251,7 @@ void configurarHorarioSaoPaulo() {
   setenv("TZ", TZ_SAO_PAULO, 1);
   tzset();
   configTime(0, 0, NTP_SERVERS[0], NTP_SERVERS[1], NTP_SERVERS[2]);
-  unsigned long inicio = millis();
-  while (!horarioValido() && millis() - inicio < 10000) {
-    delay(200);
-  }
-  if (horarioValido()) {
-    horarioConfigurado = true;
-  } else {
-    Serial.println("[NTP] falha ao sincronizar horario");
-  }
+  horarioConfigurado = true;
 }
 
 void pubTb(const char* resumo, const char* payload) {
@@ -290,22 +279,14 @@ void publicarSensores() {
     ar   = simPasso(simAr);
   }
 
-  uint64_t ts = timestampThingsBoard();
-  if (ts == 0) {
-    Serial.println("[TB] horario ainda nao sincronizado, aguardando NTP");
-    return;
-  }
-
-  StaticJsonDocument<256> doc;
-  doc["ts"] = ts;
-  JsonObject values = doc.createNestedObject("values");
-  values["temperatura"]  = temp;
-  values["umidade_ar"]   = ar;
-  values["luminosidade"] = lux;
-  values["umidade_solo"] = solo;
-  values["irrigacao"]    = irrigacaoOn ? "ON" : "OFF";
-  values["neblina"]      = neblinaOn ? "ON" : "OFF";
-  char payload[256];
+  StaticJsonDocument<192> doc;
+  doc["temperatura"]  = temp;
+  doc["umidade_ar"]   = ar;
+  doc["luminosidade"]  = lux;
+  doc["umidade_solo"] = solo;
+  doc["irrigacao"]    = irrigacaoOn ? "ON" : "OFF";
+  doc["neblina"]      = neblinaOn ? "ON" : "OFF";
+  char payload[192];
   char resumo[96];
   snprintf(resumo, sizeof(resumo), "T=%.1f U=%.1f L=%.0f S=%.1f",
            temp, ar, lux, solo);
@@ -351,17 +332,6 @@ void publicarDevice() {
   snprintf(resumo, sizeof(resumo), "%s %s", cfgDevName, WiFi.localIP().toString().c_str());
   serializeJson(doc, payload);
   pub(T_DEVICE, payload);
-}
-
-bool horarioValido() {
-  return time(nullptr) > 1700000000;
-}
-
-uint64_t timestampThingsBoard() {
-  if (!horarioValido()) return 0;
-  struct timeval tv;
-  if (gettimeofday(&tv, nullptr) != 0) return 0;
-  return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000ULL);
 }
 
 bool atualizarDht22() {
