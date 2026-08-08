@@ -32,6 +32,7 @@
 #include <Preferences.h>
 #include <DHT.h>
 #include <time.h>
+#include <esp_wifi.h>
 
 // ── Forward declarations (evita 'not declared in this scope') ─
 struct SensorSim { float valor, minVal, maxVal, delta, tend; };
@@ -40,6 +41,12 @@ struct Pub        { char t[48]; char v[16]; char h[10]; };
 
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 bool atualizarDht22();
+uint64_t timestampThingsBoard();
+bool horarioValido();
+void configurarWifiCsi();
+void desativarWifiCsi();
+void csiRxCallback(void* ctx, wifi_csi_info_t* data);
+void imprimirResumoCsi();
 
 // ── MQTT Credentials ──────────────────────────────────────────
 const char* MQTT_USER = "Qs2LcyJNQLuGSTHpMSrw";
@@ -63,7 +70,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define TFT_H   170
 
 // ── DHT22 ─────────────────────────────────────────────────────
-#define DHT_PIN  13
+#define DHT_PIN  16
 #define DHT_TYPE  DHT22
 DHT dht(DHT_PIN, DHT_TYPE);
 float dhtTempAtual = 27.0;
@@ -110,8 +117,11 @@ bool wifiConectado  = false;
 bool erroWifiPendente = false;
 bool erroMqttPendente = false;
 bool horarioConfigurado = false;
+bool wifiCsiAtivo = false;
 unsigned long lastWifiRetry = 0;
 unsigned long lastMqttRetry = 0;
+unsigned long lastCsiLog = 0;
+unsigned long lastCsiPub = 0;
 unsigned long startMs = 0;
 int  modo = 0;
 
@@ -159,6 +169,7 @@ const unsigned long IV_SENSORES = 10000;
 const unsigned long IV_BANDEJAS = 15000;
 const unsigned long IV_DEVICE   = 30000;
 const unsigned long IV_DISPLAY  = 1000;
+const unsigned long IV_CSI_LOG  = 5000;
 
 // ── Instancias das structs ────────────────────────────────────
 SensorSim simTemp = {27.0, 22.0, 32.0,   0.3,  0.05};
@@ -179,6 +190,14 @@ int pubCount = 0;
 
 bool irrigacaoOn = false;
 bool neblinaOn   = false;
+
+// ── CSI Wi-Fi ────────────────────────────────────────────────
+volatile bool     csiTemAmostra = false;
+volatile uint32_t csiFrames = 0;
+volatile int8_t   csiUltimoRssi = 0;
+volatile uint16_t csiUltimoLen = 0;
+volatile uint32_t csiUltimaEnergia = 0;
+volatile uint8_t  csiUltimoMac[6] = {0};
 
 // ── Numpad compartilhado ──────────────────────────────────────
 const char NP_DIGITS[10] = {'1','2','3','4','5','6','7','8','9','0'};
@@ -253,6 +272,142 @@ void configurarHorarioSaoPaulo() {
   tzset();
   configTime(0, 0, NTP_SERVERS[0], NTP_SERVERS[1], NTP_SERVERS[2]);
   horarioConfigurado = true;
+}
+
+void csiRxCallback(void* ctx, wifi_csi_info_t* data) {
+  (void)ctx;
+  if (!data || !data->buf || data->len == 0) return;
+
+  csiFrames++;
+  csiTemAmostra = true;
+  csiUltimoLen = data->len;
+  csiUltimoRssi = data->rx_ctrl.rssi;
+  memcpy((void*)csiUltimoMac, data->mac, sizeof(csiUltimoMac));
+
+  const int8_t* raw = (const int8_t*)data->buf;
+  uint32_t energia = 0;
+  uint16_t limite = data->len < 64 ? data->len : 64;
+  for (uint16_t i = 0; i < limite; i++) {
+    energia += (uint32_t)abs(raw[i]);
+  }
+  csiUltimaEnergia = energia;
+}
+
+void desativarWifiCsi() {
+  if (!wifiCsiAtivo) return;
+  esp_wifi_set_csi(false);
+  esp_wifi_set_promiscuous(false);
+  wifiCsiAtivo = false;
+  Serial.println("[CSI] desativado");
+}
+
+void configurarWifiCsi() {
+  if (wifiCsiAtivo) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  wifi_csi_config_t csiConfig = {};
+
+#if defined(CONFIG_SOC_WIFI_HE_SUPPORT) && CONFIG_SOC_WIFI_HE_SUPPORT
+  csiConfig.enable = true;
+  csiConfig.acquire_csi_legacy = true;
+  csiConfig.acquire_csi_ht20 = true;
+  csiConfig.acquire_csi_ht40 = false;
+  csiConfig.acquire_csi_su = false;
+  csiConfig.acquire_csi_mu = false;
+  csiConfig.acquire_csi_dcm = false;
+  csiConfig.acquire_csi_beamformed = false;
+  csiConfig.acquire_csi_he_stbc = false;
+  csiConfig.val_scale_cfg = 0;
+#else
+  csiConfig.lltf_en = true;
+  csiConfig.htltf_en = true;
+  csiConfig.stbc_htltf2_en = false;
+  csiConfig.ltf_merge_en = false;
+  csiConfig.channel_filter_en = true;
+  csiConfig.manu_scale = false;
+  csiConfig.shift = 0;
+#endif
+
+  esp_err_t err = esp_wifi_set_promiscuous(true);
+  if (err != ESP_OK) {
+    Serial.printf("[CSI] falha ao ativar promiscuous: %d\n", (int)err);
+  }
+
+  err = esp_wifi_set_csi_config(&csiConfig);
+  if (err != ESP_OK) {
+    Serial.printf("[CSI] falha ao configurar: %d\n", (int)err);
+    return;
+  }
+
+  err = esp_wifi_set_csi_rx_cb(csiRxCallback, nullptr);
+  if (err != ESP_OK) {
+    Serial.printf("[CSI] falha ao registrar callback: %d\n", (int)err);
+    return;
+  }
+
+  err = esp_wifi_set_csi(true);
+  if (err != ESP_OK) {
+    Serial.printf("[CSI] falha ao habilitar: %d\n", (int)err);
+    return;
+  }
+
+  wifiCsiAtivo = true;
+  lastCsiLog = millis();
+  csiFrames = 0;
+  csiTemAmostra = false;
+  Serial.println("[CSI] habilitado");
+}
+
+void imprimirResumoCsi() {
+  if (!wifiCsiAtivo || !csiTemAmostra) return;
+  if (millis() - lastCsiLog < IV_CSI_LOG) return;
+  lastCsiLog = millis();
+
+  uint8_t mac[6];
+  memcpy(mac, (const void*)csiUltimoMac, sizeof(mac));
+  Serial.printf("[CSI] frames=%lu rssi=%d len=%u energia=%lu mac=%02X:%02X:%02X:%02X:%02X:%02X\n",
+                (unsigned long)csiFrames,
+                (int)csiUltimoRssi,
+                (unsigned)csiUltimoLen,
+                (unsigned long)csiUltimaEnergia,
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+void publicarCsiTelemetria() {
+  if (!wifiCsiAtivo || !csiTemAmostra) return;
+  if (millis() - lastCsiPub < IV_CSI_LOG) return;
+
+  uint32_t frames;
+  int8_t rssi;
+  uint16_t len;
+  uint32_t energia;
+  uint8_t mac[6];
+
+  noInterrupts();
+  frames = csiFrames;
+  rssi = csiUltimoRssi;
+  len = csiUltimoLen;
+  energia = csiUltimaEnergia;
+  memcpy(mac, (const void*)csiUltimoMac, sizeof(mac));
+  interrupts();
+  lastCsiPub = millis();
+
+  StaticJsonDocument<192> doc;
+  doc["csi_frames"] = frames;
+  doc["csi_rssi"] = rssi;
+  doc["csi_len"] = len;
+  doc["csi_energy"] = energia;
+  char macStr[20];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  doc["csi_mac"] = macStr;
+
+  char payload[192];
+  char resumo[96];
+  snprintf(resumo, sizeof(resumo), "CSI rssi=%d len=%u energia=%lu",
+           (int)rssi, (unsigned)len, (unsigned long)energia);
+  serializeJson(doc, payload);
+  pubTb(resumo, payload);
 }
 
 void pubTb(const char* resumo, const char* payload) {
@@ -958,6 +1113,7 @@ bool conectarWifi() {
   if (wifiConectado) {
     Serial.printf("[WiFi] OK %s RSSI %d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
     configurarHorarioSaoPaulo();
+    configurarWifiCsi();
     tft.fillScreen(C_BG);
     tft.setTextColor(C_GREEN, C_BG);
     tft.drawString("WiFi conectado!", TFT_W/2, TFT_H/2 - 10);
@@ -1390,6 +1546,7 @@ void loop() {
   if (WiFi.status() != WL_CONNECTED) {
     wifiConectado = false;
     mqttConectado = false;
+    desativarWifiCsi();
     if (millis() - lastWifiRetry >= WIFI_RETRY_MS) {
       lastWifiRetry = millis();
       conectarWifi();
@@ -1418,6 +1575,8 @@ void loop() {
   if (agora-lastSensores >= IV_SENSORES) { lastSensores = agora; publicarSensores(); }
   if (agora-lastBandejas >= IV_BANDEJAS) { lastBandejas = agora; publicarBandejas(); }
   if (agora-lastDevice   >= IV_DEVICE)   { lastDevice   = agora; publicarDevice();   }
+  imprimirResumoCsi();
+  publicarCsiTelemetria();
   if (agora-lastDisplay  >= IV_DISPLAY)  { lastDisplay  = agora; desenharMonitor();  }
 
   // BTN0 segurado 3s - apaga config e reinicia
