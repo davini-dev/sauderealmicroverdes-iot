@@ -47,7 +47,11 @@ export async function GET(request: NextRequest) {
     );
 
     const totalCount = result.rows[0]?.total_count ?? 0;
-    const rows = result.rows.map(({ total_count, ...rest }) => rest);
+    const rows = result.rows.map((row) => {
+      const copy = { ...row };
+      delete copy.total_count;
+      return copy;
+    });
 
     return NextResponse.json({
       data: rows,

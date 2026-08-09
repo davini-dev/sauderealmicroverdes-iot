@@ -91,7 +91,7 @@ export default function DashboardPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5">
         {(statsError || atendimentosError) && (
           <div className="rounded-xl border border-alert/25 bg-alert-soft px-4 py-3 text-sm text-alert-ink">
-            Não consegui falar com o banco agora ({(statsError || atendimentosError)?.message}). Tentando de novo automaticamente…
+            Não consegui atualizar os dados agora. Tentando de novo automaticamente…
           </div>
         )}
 

@@ -44,7 +44,7 @@ export const TIPO_PAGAMENTO_STYLE: Record<string, string> = {
 };
 
 export function formatData(dataStr: string): string {
-  const [ano, mes, dia] = dataStr.slice(0, 10).split("-");
+  const [, mes, dia] = dataStr.slice(0, 10).split("-");
   return `${dia}/${mes}`;
 }
 

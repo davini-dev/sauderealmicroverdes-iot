@@ -40,9 +40,12 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   const comentario = (body.comentario || "").trim();
-  const autor = (body.autor || "Michele").trim().slice(0, 100);
+  const autor = (body.autor || "Michele").trim().slice(0, 100) || "Michele";
   if (!comentario) {
     return NextResponse.json({ error: "Comentário não pode ser vazio" }, { status: 400 });
+  }
+  if (comentario.length > 2000) {
+    return NextResponse.json({ error: "Comentário deve ter no máximo 2000 caracteres" }, { status: 400 });
   }
 
   try {

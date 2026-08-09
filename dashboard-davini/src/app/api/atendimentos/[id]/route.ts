@@ -28,14 +28,13 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     sets.push(`status_atendimento = $${values.length}`);
   }
 
-  if ("prontmed_confirmado" in body) {
-    values.push(Boolean(body.prontmed_confirmado));
-    sets.push(`prontmed_confirmado = $${values.length}`);
-  }
-
-  if ("consulta_confirmada" in body) {
-    values.push(Boolean(body.consulta_confirmada));
-    sets.push(`consulta_confirmada = $${values.length}`);
+  for (const field of ["prontmed_confirmado", "consulta_confirmada"] as const) {
+    if (!(field in body)) continue;
+    if (typeof body[field] !== "boolean") {
+      return NextResponse.json({ error: `${field} deve ser booleano` }, { status: 400 });
+    }
+    values.push(body[field]);
+    sets.push(`${field} = $${values.length}`);
   }
 
   if (sets.length === 0) {

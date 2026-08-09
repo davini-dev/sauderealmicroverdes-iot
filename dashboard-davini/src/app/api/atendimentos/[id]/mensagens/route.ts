@@ -58,7 +58,10 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (!mensagem) {
     return NextResponse.json({ error: "Mensagem não pode ser vazia" }, { status: 400 });
   }
-  const autor = (body.autor || "Michele").trim().slice(0, 100);
+  if (mensagem.length > 2000) {
+    return NextResponse.json({ error: "Mensagem deve ter no máximo 2000 caracteres" }, { status: 400 });
+  }
+  const autor = (body.autor || "Michele").trim().slice(0, 100) || "Michele";
 
   const webhookUrl = process.env.N8N_DASHBOARD_WEBHOOK_URL;
   const webhookSecret = process.env.N8N_DASHBOARD_WEBHOOK_SECRET;
@@ -75,14 +78,18 @@ export async function POST(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Atendimento não encontrado" }, { status: 404 });
     }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
     const resp = await fetch(webhookUrl, {
       method: "POST",
+      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
         "x-dashboard-secret": webhookSecret,
       },
       body: JSON.stringify({ numero, mensagem, autor }),
     });
+    clearTimeout(timeout);
 
     if (!resp.ok) {
       const errBody = await resp.json().catch(() => ({}));
@@ -95,6 +102,9 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ ok: true }, { status: 201 });
   } catch (err) {
     console.error("Erro ao enviar mensagem:", err);
-    return NextResponse.json({ error: "Erro ao enviar mensagem" }, { status: 500 });
+    const error = err instanceof Error && err.name === "AbortError"
+      ? "O envio demorou mais que o esperado; tente novamente"
+      : "Erro ao enviar mensagem";
+    return NextResponse.json({ error }, { status: 502 });
   }
 }

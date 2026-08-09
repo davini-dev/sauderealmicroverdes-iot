@@ -122,16 +122,27 @@ export function ComentariosPanel({
   const [prontmed, setProntmed] = useState(atendimento.prontmed_confirmado);
   const [status, setStatus] = useState(atendimento.status_atendimento);
   const [salvandoCampo, setSalvandoCampo] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
 
-  async function patchAtendimento(payload: Record<string, unknown>) {
+  async function patchAtendimento(payload: Record<string, unknown>): Promise<boolean> {
     setSalvandoCampo(true);
+    setErro(null);
     try {
-      await fetch(`/api/atendimentos/${atendimento.id}`, {
+      const res = await fetch(`/api/atendimentos/${atendimento.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setErro(body.error || "Não consegui atualizar o atendimento");
+        return false;
+      }
       onAtendimentoChanged();
+      return true;
+    } catch {
+      setErro("Falha de conexão ao atualizar o atendimento");
+      return false;
     } finally {
       setSalvandoCampo(false);
     }
@@ -141,14 +152,22 @@ export function ComentariosPanel({
     e.preventDefault();
     if (!texto.trim()) return;
     setEnviando(true);
+    setErro(null);
     try {
-      await fetch(`/api/atendimentos/${atendimento.id}/comentarios`, {
+      const res = await fetch(`/api/atendimentos/${atendimento.id}/comentarios`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ autor, comentario: texto }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setErro(body.error || "Não consegui salvar a anotação");
+        return;
+      }
       setTexto("");
       mutate();
+    } catch {
+      setErro("Falha de conexão ao salvar a anotação");
     } finally {
       setEnviando(false);
     }
@@ -156,6 +175,8 @@ export function ComentariosPanel({
 
   return (
     <div className="bg-bg border-t border-border px-5 py-4 space-y-4">
+      {erro && <p role="alert" className="text-sm text-alert-ink bg-alert-soft rounded-lg px-3 py-2">{erro}</p>}
+
       {atendimento.consulta_confirmada && (
         <label className="flex items-center gap-2 text-sm text-ink bg-accent-soft border border-accent/20 rounded-lg px-3 py-2 w-fit cursor-pointer">
           <input
@@ -163,8 +184,11 @@ export function ComentariosPanel({
             checked={prontmed}
             disabled={salvandoCampo}
             onChange={(e) => {
-              setProntmed(e.target.checked);
-              patchAtendimento({ prontmed_confirmado: e.target.checked });
+              const novo = e.target.checked;
+              setProntmed(novo);
+              void patchAtendimento({ prontmed_confirmado: novo }).then((ok) => {
+                if (!ok) setProntmed(!novo);
+              });
             }}
             className="accent-accent w-4 h-4"
           />
@@ -257,9 +281,12 @@ export function ComentariosPanel({
           value={status}
           disabled={salvandoCampo}
           onChange={(e) => {
+            const anterior = status;
             const novo = e.target.value as typeof status;
             setStatus(novo);
-            patchAtendimento({ status_atendimento: novo });
+            void patchAtendimento({ status_atendimento: novo }).then((ok) => {
+              if (!ok) setStatus(anterior);
+            });
           }}
           className="rounded-lg border border-border-strong bg-surface px-2.5 py-1 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         >
